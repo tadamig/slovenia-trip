@@ -49,7 +49,7 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs }: Pro
           <GroupProfile room={room} myPrefs={myPrefs} allPrefs={allPrefs} onReloadPrefs={onReloadPrefs} />
         )}
         {activeTab === 'packing' && (
-          <PackingList room={room} myPrefs={myPrefs} />
+          <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
         )}
         {activeTab === 'weather' && (
           <WeatherWidget room={room} myPrefs={myPrefs} />

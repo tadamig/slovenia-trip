@@ -29,3 +29,42 @@ export function generateRoomCode(): string {
   }
   return result
 }
+
+// ——— Historia pokojów ———
+
+export type RoomHistory = {
+  code: string
+  name: string       // nazwa wyprawy
+  joinedAt: string   // data dołączenia
+  userName: string   // imię użytkownika
+}
+
+export function getRoomHistory(): RoomHistory[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem('trip_room_history')
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+export function saveRoomToHistory(code: string, tripName: string, userName: string): void {
+  if (typeof window === 'undefined') return
+  const history = getRoomHistory().filter(r => r.code !== code) // usuń duplikat
+  const entry: RoomHistory = {
+    code,
+    name: tripName,
+    joinedAt: new Date().toISOString(),
+    userName,
+  }
+  // Trzymaj max 5 pokojów, najnowszy na górze
+  const updated = [entry, ...history].slice(0, 5)
+  localStorage.setItem('trip_room_history', JSON.stringify(updated))
+}
+
+export function removeRoomFromHistory(code: string): void {
+  if (typeof window === 'undefined') return
+  const history = getRoomHistory().filter(r => r.code !== code)
+  localStorage.setItem('trip_room_history', JSON.stringify(history))
+}

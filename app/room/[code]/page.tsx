@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getSessionId, getSessionName } from '@/lib/session'
+import { getSessionId, getSessionName, saveRoomToHistory } from '@/lib/session'
 import { Room, UserPreference } from '@/lib/supabase'
 import DialogFlow from './components/DialogFlow'
 import AppShell from './components/AppShell'
@@ -41,6 +41,8 @@ export default function RoomPage() {
         return
       }
       setRoom(roomData)
+      // Zapisz pokój do historii
+      saveRoomToHistory(roomData.code, roomData.trip_name, getSessionName())
 
       // Pobierz preferencje tego użytkownika
       const sid = getSessionId()

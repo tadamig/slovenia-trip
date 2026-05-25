@@ -213,19 +213,23 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
   async function fetchRedditPlaces() {
     setRedditLoading(true)
-    const queries = ['Slovenia SUP kayak lake', 'Slovenia hiking trekking', 'Budapest travel tips food']
+    const queries = [
+      'Slovenia SUP lake swimming',
+      'Slovenia hiking trekking trails',
+      'Budapest food local restaurants',
+      'Bled lake activities',
+      'Soča river adventure',
+    ]
     const found: Map<string, { count: number; score: number; links: string[] }> = new Map()
 
     try {
       for (const q of queries) {
         try {
-          const res = await fetch(
-            `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=top&limit=15&t=year`,
-            { headers: { 'User-Agent': 'SloveniaTripPlanner/1.0' } }
-          )
+          // Używamy API route żeby ominąć CORS
+          const res = await fetch(`/api/reddit?q=${encodeURIComponent(q)}`)
           if (!res.ok) continue
           const data = await res.json()
-          const posts: RedditPost[] = data.data?.children?.map((c: any) => c.data) || []
+          const posts: RedditPost[] = data.posts || []
 
           // Wyciągnij miejsca z tytułów postów
           const placePatterns = [

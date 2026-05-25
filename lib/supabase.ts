@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Usuwamy białe znaki i \n z kluczy (problem z Vercel env vars)
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim()
+const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim()
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   realtime: {
@@ -10,13 +11,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     },
   },
 })
-
-export type Database = {
-  rooms: Room
-  user_preferences: UserPreference
-  packing_items: PackingItem
-  saved_places: SavedPlace
-}
 
 export type Room = {
   id: string
@@ -35,7 +29,7 @@ export type UserPreference = {
   user_name: string
   activities: string[]
   intensity: 'slow' | 'balanced' | 'intense'
-  accommodation: 'van_only' | 'van_plus' | 'flexible'
+  accommodation: string
   food: string[]
   completed: boolean
   created_at: string
@@ -72,7 +66,6 @@ export type PlaceData = {
   sources?: number
   sentiment?: string
   region?: 'budapest' | 'slovenia'
-  thumbnail?: string
 }
 
 export type PlaceNote = {

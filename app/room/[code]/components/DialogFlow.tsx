@@ -35,9 +35,10 @@ const INTENSITY = [
 ]
 
 const ACCOMMODATION = [
-  { id: 'van_only', emoji: '🚐', label: 'Tylko van' },
-  { id: 'van_plus', emoji: '🏠', label: 'Van + noclegi' },
-  { id: 'flexible', emoji: '🏨', label: 'Elastycznie' },
+  { id: 'tent', emoji: '🏕️', label: 'Namiot / camping' },
+  { id: 'van', emoji: '🚐', label: 'Van / kamper' },
+  { id: 'airbnb', emoji: '🏠', label: 'Airbnb / domki' },
+  { id: 'hotel', emoji: '🏨', label: 'Hotel / hostel' },
 ]
 
 const FOOD = [

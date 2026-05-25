@@ -25,7 +25,10 @@ const INTENSITY_MAP: Record<string, string> = {
   slow: '🐢 Spokojne', balanced: '⚖️ Zbalansowane', intense: '🔥 Intensywne',
 }
 const ACCOMMODATION_MAP: Record<string, string> = {
-  van_only: '🚐 Tylko van', van_plus: '🏠 Van + noclegi', flexible: '🏨 Elastycznie',
+  tent: '🏕️ Namiot / camping',
+  van: '🚐 Van / kamper',
+  airbnb: '🏠 Airbnb / domki',
+  hotel: '🏨 Hotel / hostel',
 }
 
 interface Props {

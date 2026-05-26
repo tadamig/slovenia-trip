@@ -390,6 +390,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
   const [loading, setLoading] = useState(false)
+  const [fadingOut, setFadingOut] = useState(false)
+  const [resultsVisible, setResultsVisible] = useState(false)
   const [scanPhase, setScanPhase] = useState(0)
   const [postsScanned, setPostsScanned] = useState(0)
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
@@ -489,6 +491,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoading(true)
     setError('')
     setAiPlaces([])
+    setResultsVisible(false)
     setScanPhase(0)
     setPostsScanned(0)
 
@@ -532,10 +535,16 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       if (!res1.ok) throw new Error('Błąd API')
       const data1 = await res1.json()
       setScanPhase(3)
-      await new Promise(r => setTimeout(r, 400))
+      // Fade out animacji
+      setFadingOut(true)
+      await new Promise(r => setTimeout(r, 500))
       const firstBatch = data1.places || []
       setAiPlaces(firstBatch)
       setLoading(false)
+      setFadingOut(false)
+      // Fade in wyników
+      await new Promise(r => setTimeout(r, 50))
+      setResultsVisible(true)
 
       // Batch 2 — kolejne 10 miejsc w tle
       const res2 = await fetch('/api/places', {
@@ -651,7 +660,13 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       )}
 
       {/* Animacja skanowania */}
-      {loading && <GlobeAnimation postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />}
+      <div style={{
+        opacity: loading ? (fadingOut ? 0 : 1) : 0,
+        transition: 'opacity .5s ease',
+        display: loading ? 'block' : 'none',
+      }}>
+        <GlobeAnimation postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />
+      </div>
 
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
@@ -683,7 +698,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {/* Wyniki */}
       {!loading && aiPlaces.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-4" style={{
+          opacity: resultsVisible ? 1 : 0,
+          transform: resultsVisible ? 'translateY(0)' : 'translateY(12px)',
+          transition: 'opacity .5s ease, transform .5s ease',
+        }}>
           {/* Pasujące do ekipy */}
           {matchingPlaces.length > 0 && (
             <div className="space-y-3">

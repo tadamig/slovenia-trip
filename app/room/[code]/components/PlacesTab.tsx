@@ -70,7 +70,8 @@ async function fetchRedditFromBrowser(activities: string[], region: string): Pro
   return allPosts.slice(0, 25)
 }
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
+import GlobeAnimation from './GlobeAnimation'
 import { supabase, SavedPlace, Room, UserPreference } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
 import { Heart, MessageSquare, Star, MapPin, ExternalLink, ChevronDown, Filter, RefreshCw } from 'lucide-react'
@@ -112,8 +113,6 @@ const BUDAPEST_SPOTS = ['Budapeszt', 'Buda', 'Pest', 'Óbuda']
 
 // ——— ANIMACJA SKANOWANIA ———
 function ScanAnimation({ postsScanned, phase }: { postsScanned: number; phase: number }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animRef = useRef<number>()
   const [visibleSpots, setVisibleSpots] = useState<{ name: string; x: number; y: number; alpha: number }[]>([])
 
   // Punkty na "mapie" Słowenii
@@ -409,11 +408,81 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
   useEffect(() => {
     loadSavedPlaces()
+    loadSavedRecommendations()
   }, [room.id])
+
+  async function loadSavedRecommendations() {
+    const { data } = await supabase
+      .from('ai_recommendations')
+      .select('*')
+      .eq('room_id', room.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (data && data.length > 0) {
+      setAiPlaces(data[0].places || [])
+      setPostsScanned(data[0].posts_analyzed || 0)
+    }
+  }
+
+  async function saveRecommendations(places: AIPlace[], analyzed: number) {
+    // Usuń stare i zapisz nowe
+    await supabase.from('ai_recommendations').delete().eq('room_id', room.id)
+    await supabase.from('ai_recommendations').insert({
+      room_id: room.id,
+      region: activeRegion,
+      places,
+      posts_analyzed: analyzed,
+    })
+  }
 
   async function loadSavedPlaces() {
     const { data } = await supabase.from('saved_places').select('*').eq('room_id', room.id)
     setSavedPlaces(data || [])
+  }
+
+  async function handleSearchMore() {
+    // Szuka kolejnej partii i dodaje do istniejących
+    const region = activeRegion === 'all' ? 'slovenia' : activeRegion
+    let posts: any[] = []
+    try { posts = await fetchRedditFromBrowser(groupActivities, region) } catch {}
+
+    const tripDays = room.start_date && room.end_date
+      ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
+      : null
+
+    const payload = {
+      posts,
+      activities: groupActivities,
+      region,
+      transport: myPrefs.transport || myPrefs.accommodation,
+      accommodation: myPrefs.accommodation,
+      intensity: myPrefs.intensity,
+      numPeople: room.num_people || 4,
+      startDate: room.start_date,
+      endDate: room.end_date,
+      tripDays,
+      batch: 2,
+    }
+
+    try {
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const newPlaces = (data.places || []).filter(
+          (np: AIPlace) => !aiPlaces.find(ep => ep.name === np.name)
+        )
+        const updated = [...aiPlaces, ...newPlaces]
+        for (const place of newPlaces) {
+          await new Promise(r => setTimeout(r, 150))
+          setAiPlaces(prev => [...prev, place])
+        }
+        await saveRecommendations(updated, posts.length)
+      }
+    } catch {}
   }
 
   async function handleSearch() {
@@ -464,7 +533,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       const data1 = await res1.json()
       setScanPhase(3)
       await new Promise(r => setTimeout(r, 400))
-      setAiPlaces(data1.places || [])
+      const firstBatch = data1.places || []
+      setAiPlaces(firstBatch)
       setLoading(false)
 
       // Batch 2 — kolejne 10 miejsc w tle
@@ -474,14 +544,18 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         body: JSON.stringify({ ...payload, batch: 2 }),
       })
 
+      let allPlaces = [...firstBatch]
       if (res2.ok) {
         const data2 = await res2.json()
-        // Dodaj z fade-in po kolei
         for (const place of (data2.places || [])) {
           await new Promise(r => setTimeout(r, 150))
+          allPlaces = [...allPlaces, place]
           setAiPlaces(prev => [...prev, place])
         }
       }
+
+      // Zapisz wszystkie wyniki
+      await saveRecommendations(allPlaces, posts.length)
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
       setLoading(false)
@@ -559,17 +633,25 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         ))}
       </div>
 
-      {/* Przycisk szukaj */}
+      {/* Przyciski */}
       {!loading && (
-        <button onClick={handleSearch}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
-          <RefreshCw className="w-4 h-4" />
-          {aiPlaces.length > 0 ? 'Odśwież rekomendacje' : 'Szukaj rekomendacji dla ekipy'}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleSearch}
+            className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
+            <RefreshCw className="w-4 h-4" />
+            {aiPlaces.length > 0 ? 'Odśwież' : 'Szukaj dla ekipy'}
+          </button>
+          {aiPlaces.length > 0 && (
+            <button onClick={handleSearchMore}
+              className="flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-300 rounded-2xl px-4 font-semibold text-sm transition-all active:scale-95">
+              + Więcej
+            </button>
+          )}
+        </div>
       )}
 
       {/* Animacja skanowania */}
-      {loading && <ScanAnimation postsScanned={postsScanned} phase={scanPhase} />}
+      {loading && <GlobeAnimation postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />}
 
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}

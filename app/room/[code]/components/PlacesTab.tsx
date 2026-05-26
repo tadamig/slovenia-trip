@@ -1,5 +1,75 @@
 'use client'
 
+
+const ACTIVITY_QUERIES: Record<string, string[]> = {
+  sup: ['Slovenia SUP paddleboard lake', 'Bled Bohinj kayak paddle', 'Soča river kayak'],
+  trekking: ['Slovenia hiking trail', 'Julian Alps trekking', 'Slovenia waterfall hike'],
+  food: ['Slovenia local restaurant', 'Ljubljana food must try', 'Slovenia traditional cuisine'],
+  sunset: ['Slovenia viewpoint sunset', 'Bled viewpoint photography'],
+  sightseeing: ['Slovenia hidden gem tourist', 'Ljubljana worth visiting'],
+  nightlife: ['Ljubljana nightlife bar', 'Ljubljana craft beer'],
+  markets: ['Ljubljana market local', 'Slovenia farmers market'],
+  photo: ['Slovenia photography spot', 'Bled photography best'],
+  relax: ['Slovenia thermal spa', 'Slovenia peaceful lake swim'],
+  cycling: ['Slovenia cycling route', 'Ljubljana bike path'],
+}
+
+const BUDAPEST_QUERIES: Record<string, string[]> = {
+  food: ['Budapest local food restaurant', 'Budapest must eat'],
+  sightseeing: ['Budapest hidden gem', 'Budapest underrated'],
+  nightlife: ['Budapest ruin bar', 'Budapest nightlife'],
+  relax: ['Budapest thermal bath', 'Budapest spa'],
+  markets: ['Budapest market local', 'Budapest great market'],
+  sup: ['Budapest Danube kayak'],
+  photo: ['Budapest photography spot'],
+  sunset: ['Budapest sunset viewpoint'],
+}
+
+async function fetchRedditFromBrowser(activities: string[], region: string): Promise<any[]> {
+  const queryMap = region === 'budapest' ? BUDAPEST_QUERIES : ACTIVITY_QUERIES
+  const queries: string[] = []
+  
+  for (const act of activities) {
+    const q = queryMap[act] || []
+    queries.push(...q.slice(0, 1))
+  }
+  queries.push(region === 'budapest' ? 'Budapest travel tips' : 'Slovenia travel tips')
+
+  const allPosts: any[] = []
+  const seenUrls = new Set<string>()
+
+  for (const query of queries.slice(0, 6)) {
+    try {
+      const res = await fetch(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&limit=8&t=year`,
+        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TripPlanner/1.0)' } }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      const posts = (data.data?.children || [])
+        .filter((c: any) => c.data.score >= 5)
+        .map((c: any) => ({
+          title: c.data.title,
+          score: c.data.score,
+          url: `https://reddit.com${c.data.permalink}`,
+          subreddit: c.data.subreddit,
+          text: (c.data.selftext || '').slice(0, 400),
+        }))
+      
+      for (const p of posts) {
+        if (!seenUrls.has(p.url)) {
+          seenUrls.add(p.url)
+          allPosts.push(p)
+        }
+      }
+    } catch {
+      // Jeśli Reddit blokuje - kontynuuj bez niego
+    }
+  }
+
+  return allPosts.slice(0, 25)
+}
+
 import { useState, useEffect, useRef } from 'react'
 import { supabase, SavedPlace, Room, UserPreference } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
@@ -339,16 +409,24 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setError('')
     setAiPlaces([])
     setScanPhase(0)
+    setPostsScanned(0)
 
-    // Animacja faz
-    const phaseTimer = setInterval(() => {
-      setScanPhase(p => Math.min(p + 1, 3))
-    }, 1800)
+    const region = activeRegion === 'all' ? 'slovenia' : activeRegion
 
-    // Symuluj licznik postów
-    const postTimer = setInterval(() => {
-      setPostsScanned(p => Math.min(p + Math.floor(Math.random() * 5 + 1), 25))
-    }, 300)
+    // Faza 1 — pobierz posty z Reddit (z przeglądarki)
+    setScanPhase(0)
+    let posts: any[] = []
+    try {
+      posts = await fetchRedditFromBrowser(groupActivities, region)
+      setPostsScanned(posts.length)
+    } catch {
+      // Reddit niedostępny — lecimy bez postów
+    }
+
+    // Faza 2 — analiza
+    setScanPhase(1)
+    await new Promise(r => setTimeout(r, 600))
+    setScanPhase(2)
 
     try {
       const tripDays = room.start_date && room.end_date
@@ -359,9 +437,10 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          posts,
           activities: groupActivities,
-          region: activeRegion === 'all' ? 'slovenia' : activeRegion,
-          transport: myPrefs.accommodation,
+          region,
+          transport: myPrefs.transport || myPrefs.accommodation,
           accommodation: myPrefs.accommodation,
           intensity: myPrefs.intensity,
           numPeople: room.num_people || 4,
@@ -371,22 +450,15 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         }),
       })
 
-      clearInterval(phaseTimer)
-      clearInterval(postTimer)
+      setScanPhase(3)
 
       if (!res.ok) throw new Error('Błąd API')
       const data = await res.json()
 
-      setScanPhase(4)
-      setPostsScanned(data.postsAnalyzed || 0)
-
-      // Krótka pauza dla efektu "gotowe"
-      await new Promise(r => setTimeout(r, 800))
+      await new Promise(r => setTimeout(r, 500))
       setAiPlaces(data.places || [])
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
-      clearInterval(phaseTimer)
-      clearInterval(postTimer)
     } finally {
       setLoading(false)
     }

@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Leaflet wymaga wyłączenia SSR dla komponentu mapy
+  optimizeFonts: false,
   webpack: (config) => {
     config.resolve.fallback = { fs: false }
     return config

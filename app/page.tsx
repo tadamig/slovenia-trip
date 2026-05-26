@@ -18,6 +18,7 @@ export default function LandingPage() {
   const [roomCode, setRoomCode] = useState('')
   const [userName, setUserName] = useState('')
   const [loading, setLoading] = useState(false)
+  const [numPeople, setNumPeople] = useState(4)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
   const [history, setHistory] = useState<RoomHistory[]>([])
@@ -34,7 +35,7 @@ export default function LandingPage() {
     setLoading(true); setError('')
     try {
       const code = generateRoomCode()
-      const { error: dbError } = await supabase.from('rooms').insert({ code, trip_name: 'Wyprawa 🏔️' })
+      const { error: dbError } = await supabase.from('rooms').insert({ code, trip_name: 'Wyprawa 🏔️', num_people: numPeople })
       if (dbError) throw dbError
       setSessionName(userName.trim())
       router.push(`/room/${code}`)
@@ -271,6 +272,18 @@ export default function LandingPage() {
                     <input type="text" value={userName} onChange={e => setUserName(e.target.value)} placeholder="np. Kasia"
                       className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-sm text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 transition-colors" maxLength={20} />
                   </div>
+                  {mode === 'create' && (
+                    <div>
+                      <label className="text-xs text-stone-500 font-medium block mb-1.5">Liczba osób w ekipie</label>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setNumPeople(p => Math.max(2, p - 1))}
+                          className="w-10 h-10 rounded-xl bg-stone-700 text-stone-300 text-lg font-bold flex items-center justify-center hover:bg-stone-600 transition-colors">−</button>
+                        <span className="flex-1 text-center text-stone-100 font-semibold text-lg">{numPeople} osoby</span>
+                        <button onClick={() => setNumPeople(p => Math.min(12, p + 1))}
+                          className="w-10 h-10 rounded-xl bg-stone-700 text-stone-300 text-lg font-bold flex items-center justify-center hover:bg-stone-600 transition-colors">+</button>
+                      </div>
+                    </div>
+                  )}
                   {mode === 'join' && (
                     <div>
                       <label className="text-xs text-stone-500 font-medium block mb-1.5">Kod pokoju</label>

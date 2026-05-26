@@ -19,6 +19,9 @@ export type Room = {
   start_city: string
   end_city: string
   start_date: string | null
+  end_date: string | null
+  num_people: number
+  transport: string
   trip_name: string
 }
 
@@ -30,6 +33,7 @@ export type UserPreference = {
   activities: string[]
   intensity: 'slow' | 'balanced' | 'intense'
   accommodation: string
+  transport: string
   food: string[]
   completed: boolean
   created_at: string

@@ -66,7 +66,7 @@ export default function LandingPage() {
       // Szukaj user_preferences z tym imieniem
       const { data } = await supabase
         .from('user_preferences')
-        .select('room_id, user_name, updated_at')
+        .select('room_id, user_name, updated_at, session_id')
         .eq('user_name', userName.trim())
         .order('updated_at', { ascending: false })
         .limit(5)
@@ -75,6 +75,12 @@ export default function LandingPage() {
         setError('Nie znaleziono pokojów dla tego imienia. Dołącz przez kod.')
         setSearching(false)
         return
+      }
+
+      // Przywróć session_id z pierwszego rekordu (żeby nie tracić preferencji)
+      const originalSessionId = data[0]?.session_id
+      if (originalSessionId && typeof window !== 'undefined') {
+        localStorage.setItem('trip_session_id', originalSessionId)
       }
 
       // Pobierz szczegóły pokojów

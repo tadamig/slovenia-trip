@@ -68,3 +68,9 @@ export function removeRoomFromHistory(code: string): void {
   const history = getRoomHistory().filter(r => r.code !== code)
   localStorage.setItem('trip_room_history', JSON.stringify(history))
 }
+
+export function setSessionId(id: string): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('trip_session_id', id)
+  }
+}

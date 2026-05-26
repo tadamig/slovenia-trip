@@ -88,8 +88,9 @@ interface AIPlace {
   tags: string[]
   region: 'budapest' | 'slovenia'
   subregion: string
+  lat?: number
+  lon?: number
   estimatedCost: 'free' | 'cheap' | 'moderate' | 'expensive'
-  bestTimeOfDay: string
   sourceCount: number
   sentiment: string
   sources: { title: string; url: string; score: number; subreddit: string }[]
@@ -306,16 +307,26 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
         )}
       </div>
 
-      {/* Sources + sentiment */}
+      {/* Sources + sentiment + maps */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => setShowSources(!showSources)}
           className="flex items-center gap-1.5 text-stone-500 hover:text-stone-300 text-xs transition-colors"
         >
           <Star className="w-3 h-3" />
-          {place.sourceCount}x na Reddit · {place.sentiment}
+          {place.sourceCount}x · {place.sentiment}
           <ChevronDown className={`w-3 h-3 transition-transform ${showSources ? 'rotate-180' : ''}`} />
         </button>
+        {place.lat && place.lon && (
+          <a
+            href={`https://maps.google.com/?q=${place.lat},${place.lon}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-water-400 hover:text-water-300 text-xs transition-colors"
+          >
+            <MapPin className="w-3 h-3" /> Google Maps
+          </a>
+        )}
       </div>
 
       {/* Reddit sources */}
@@ -384,6 +395,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [postsScanned, setPostsScanned] = useState(0)
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
   const [showAll, setShowAll] = useState(false)
+  const [activeTag, setActiveTag] = useState<string | null>(null)
   const [error, setError] = useState('')
   const sessionId = getSessionId()
 
@@ -413,53 +425,65 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
     const region = activeRegion === 'all' ? 'slovenia' : activeRegion
 
-    // Faza 1 — pobierz posty z Reddit (z przeglądarki)
-    setScanPhase(0)
+    // Pobierz posty z Reddit z przeglądarki
     let posts: any[] = []
     try {
       posts = await fetchRedditFromBrowser(groupActivities, region)
       setPostsScanned(posts.length)
-    } catch {
-      // Reddit niedostępny — lecimy bez postów
+    } catch {}
+
+    setScanPhase(1)
+
+    const tripDays = room.start_date && room.end_date
+      ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
+      : null
+
+    const payload = {
+      posts,
+      activities: groupActivities,
+      region,
+      transport: myPrefs.transport || myPrefs.accommodation,
+      accommodation: myPrefs.accommodation,
+      intensity: myPrefs.intensity,
+      numPeople: room.num_people || 4,
+      startDate: room.start_date,
+      endDate: room.end_date,
+      tripDays,
     }
 
-    // Faza 2 — analiza
-    setScanPhase(1)
-    await new Promise(r => setTimeout(r, 600))
-    setScanPhase(2)
-
     try {
-      const tripDays = room.start_date && room.end_date
-        ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
-        : null
-
-      const res = await fetch('/api/places', {
+      // Batch 1 — pierwsze 10 miejsc
+      setScanPhase(2)
+      const res1 = await fetch('/api/places', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          posts,
-          activities: groupActivities,
-          region,
-          transport: myPrefs.transport || myPrefs.accommodation,
-          accommodation: myPrefs.accommodation,
-          intensity: myPrefs.intensity,
-          numPeople: room.num_people || 4,
-          startDate: room.start_date,
-          endDate: room.end_date,
-          tripDays,
-        }),
+        body: JSON.stringify({ ...payload, batch: 1 }),
       })
 
+      if (!res1.ok) throw new Error('Błąd API')
+      const data1 = await res1.json()
       setScanPhase(3)
+      await new Promise(r => setTimeout(r, 400))
+      setAiPlaces(data1.places || [])
+      setLoading(false)
 
-      if (!res.ok) throw new Error('Błąd API')
-      const data = await res.json()
+      // Batch 2 — kolejne 10 miejsc w tle
+      const res2 = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, batch: 2 }),
+      })
 
-      await new Promise(r => setTimeout(r, 500))
-      setAiPlaces(data.places || [])
+      if (res2.ok) {
+        const data2 = await res2.json()
+        // Dodaj z fade-in po kolei
+        for (const place of (data2.places || [])) {
+          await new Promise(r => setTimeout(r, 150))
+          setAiPlaces(prev => [...prev, place])
+        }
+      }
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
-    } finally {
       setLoading(false)
     }
   }
@@ -490,9 +514,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     if (data) setSavedPlaces(prev => prev.map(p => p.id === placeId ? data : p))
   }
 
-  const filteredPlaces = aiPlaces.filter(p =>
-    activeRegion === 'all' || p.region === activeRegion
-  )
+  const filteredPlaces = aiPlaces.filter(p => {
+    const regionOk = activeRegion === 'all' || p.region === activeRegion
+    const tagOk = activeTag === null || p.tags.includes(activeTag)
+    return regionOk && tagOk
+  })
   const matchingPlaces = filteredPlaces.filter(p => p.tags.some(t => groupActivities.includes(t)))
   const otherPlaces = filteredPlaces.filter(p => !p.tags.some(t => groupActivities.includes(t)))
 
@@ -547,6 +573,31 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
+
+      {/* Filtry kategorii */}
+      {!loading && aiPlaces.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setActiveTag(null)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              activeTag === null ? 'bg-stone-700 text-stone-100 border border-stone-600' : 'bg-stone-800/40 text-stone-500 border border-stone-700/40'
+            }`}
+          >
+            🗺️ Wszystkie
+          </button>
+          {groupActivities.map(tag => (
+            <button
+              key={tag}
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                activeTag === tag ? 'bg-forest-700/40 text-forest-300 border border-forest-600/40' : 'bg-stone-800/40 text-stone-500 border border-stone-700/40'
+              }`}
+            >
+              {ACTIVITY_TAGS[tag] || tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Wyniki */}
       {!loading && aiPlaces.length > 0 && (

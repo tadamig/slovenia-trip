@@ -1,43 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { posts = [], activities = [], region = 'slovenia', transport, accommodation, intensity, numPeople, startDate, endDate, tripDays } = body
+const transportLabels: Record<string, string> = {
+  van: 'van/kamper', own_car: 'własny samochód', rental: 'wynajem auta', motorcycle: 'motocykl'
+}
+const accommodationLabels: Record<string, string> = {
+  tent: 'namiot/camping', van: 'van/kamper', airbnb: 'Airbnb/domki', hotel: 'hotel/hostel'
+}
+const intensityLabels: Record<string, string> = {
+  slow: 'spokojne tempo', balanced: 'zbalansowane', intense: 'intensywne'
+}
 
-    if (posts.length === 0) {
-      return NextResponse.json({ places: [], postsAnalyzed: 0 })
-    }
+function buildPrompt(body: any, batch: 1 | 2): string {
+  const { posts = [], activities = [], region = 'slovenia', transport, accommodation, intensity, numPeople, tripDays } = body
+  const daysInfo = tripDays ? `${tripDays} dni` : 'nieznana liczba dni'
 
-    const transportLabels: Record<string, string> = {
-      van: 'van/kamper', own_car: 'własny samochód', rental: 'wynajem auta', motorcycle: 'motocykl'
-    }
-    const accommodationLabels: Record<string, string> = {
-      tent: 'namiot/camping', van: 'van/kamper', airbnb: 'Airbnb/domki', hotel: 'hotel/hostel'
-    }
-    const intensityLabels: Record<string, string> = {
-      slow: 'spokojne tempo', balanced: 'zbalansowane', intense: 'intensywne'
-    }
+  const excludeNote = batch === 2
+    ? '\nWAŻNE: To jest druga partia — zwróć INNE miejsca niż te które mogłeś już wymienić w pierwszej partii. Skup się na mniej oczywistych, lokalnych, ukrytych perełkach.'
+    : '\nWAŻNE: To jest pierwsza partia — zwróć najbardziej dopasowane i polecane miejsca.'
 
-    const daysInfo = tripDays ? `${tripDays} dni` : 'nieznana liczba dni'
-
-    const deepseekRes = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        max_tokens: 2000,
-        messages: [
-          {
-            role: 'system',
-            content: 'Jesteś ekspertem od podróży po Słowenii i Budapeszcie. Analizujesz posty z Reddit i wyciągasz konkretne rekomendacje miejsc. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po.',
-          },
-          {
-            role: 'user',
-            content: `Przeanalizuj poniższe posty z Reddit i wyciągnij maksymalnie 8 konkretnych miejsc/restauracji/aktywności wartych odwiedzenia.
+  return `Przeanalizuj poniższe posty z Reddit i wyciągnij dokładnie 10 konkretnych miejsc/restauracji/aktywności wartych odwiedzenia.${excludeNote}
 
 PROFIL EKIPY:
 - Liczba osób: ${numPeople || 4}
@@ -61,6 +42,8 @@ Zwróć JSON:
       "tags": ["sup", "food"],
       "region": "slovenia",
       "subregion": "Bled",
+      "lat": 46.3683,
+      "lon": 14.1146,
       "estimatedCost": "free|cheap|moderate|expensive",
       "sourceCount": 3,
       "sourcePosts": [1, 3, 5],
@@ -69,7 +52,35 @@ Zwróć JSON:
   ]
 }
 
-Sortuj po sourceCount malejąco.`,
+Każde miejsce MUSI mieć lat i lon (współrzędne GPS). Sortuj po sourceCount malejąco.`
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { posts = [], batch = 1 } = body
+
+    if (posts.length === 0) {
+      return NextResponse.json({ places: [], postsAnalyzed: 0 })
+    }
+
+    const deepseekRes = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 2500,
+        messages: [
+          {
+            role: 'system',
+            content: 'Jesteś ekspertem od podróży po Słowenii i Budapeszcie. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po.',
+          },
+          {
+            role: 'user',
+            content: buildPrompt(body, batch as 1 | 2),
           }
         ],
       }),

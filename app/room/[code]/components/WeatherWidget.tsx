@@ -148,9 +148,8 @@ async function fetchForecast(lat: number, lon: number, startDate?: string): Prom
 
   const fmt = (d: Date) => d.toISOString().split('T')[0]
 
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max,weather_code&timezone=Europe%2FWarsaw&start_date=${fmt(start)}&end_date=${fmt(end)}`
-
-  const res = await fetch(url)
+  const params = new URLSearchParams({ lat: String(lat), lon: String(lon), start_date: fmt(start), end_date: fmt(end) })
+  const res = await fetch(`/api/weather?${params}`)
   if (!res.ok) throw new Error(`API error ${res.status}`)
   const data = await res.json()
 

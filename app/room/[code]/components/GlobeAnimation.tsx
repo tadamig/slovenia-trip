@@ -2,19 +2,26 @@
 
 import { useEffect, useState } from 'react'
 
-interface Pin {
-  id: number
-  cx: number
-  cy: number
-  label: string
-  visible: boolean
-}
-
-const PLACES = [
-  'Bled', 'Soča', 'Ljubljana', 'Piran', 'Triglav',
-  'Bohinj', 'Kobarid', 'Budapeszt', 'Maribor', 'Koper',
-  'Kranjska Gora', 'Portorož', 'Vogel', 'Bovec',
+const CARDS = [
+  { icon: '🏔️', label: 'Triglav', color: 'from-forest-900/60 to-forest-800/40' },
+  { icon: '🌊', label: 'Soča', color: 'from-water-900/60 to-water-800/40' },
+  { icon: '🍽️', label: 'Lokalna kuchnia', color: 'from-sand-900/60 to-sand-800/40' },
+  { icon: '📍', label: 'Bled', color: 'from-forest-900/60 to-stone-800/40' },
+  { icon: '🏄', label: 'SUP', color: 'from-water-900/60 to-forest-900/40' },
+  { icon: '🌅', label: 'Zachód słońca', color: 'from-sand-900/60 to-stone-800/40' },
+  { icon: '🥾', label: 'Szlaki', color: 'from-forest-900/60 to-water-900/40' },
+  { icon: '🏛️', label: 'Ljubljana', color: 'from-stone-800/60 to-forest-900/40' },
+  { icon: '🍺', label: 'Lokalne bary', color: 'from-sand-800/60 to-stone-800/40' },
+  { icon: '📸', label: 'Foto spot', color: 'from-water-900/60 to-stone-800/40' },
 ]
+
+interface FloatingCard {
+  id: number
+  card: typeof CARDS[0]
+  x: number
+  delay: number
+  duration: number
+}
 
 interface Props {
   phase: number
@@ -22,188 +29,117 @@ interface Props {
   totalPosts: number
 }
 
-export default function GlobeAnimation({ phase, postsScanned, totalPosts }: Props) {
-  const [pins, setPins] = useState<Pin[]>([])
-  const [rotation, setRotation] = useState(0)
-  const [counter, setCounter] = useState(0)
+const PHASE_LABELS = [
+  'Przeszukuję Reddit...',
+  'Odebrano dane...',
+  'DeepSeek analizuje...',
+  'Dopasowuję do ekipy...',
+]
+
+export default function GlobeAnimation({ phase, postsScanned }: Props) {
+  const [cards, setCards] = useState<FloatingCard[]>([])
+  const [tick, setTick] = useState(0)
 
   useEffect(() => {
-    const rotTimer = setInterval(() => {
-      setRotation(r => (r + 0.4) % 360)
-    }, 16)
-    return () => clearInterval(rotTimer)
+    // Stwórz początkowe karty
+    const initial: FloatingCard[] = Array.from({ length: 4 }, (_, i) => ({
+      id: i,
+      card: CARDS[i % CARDS.length],
+      x: 15 + i * 22,
+      delay: i * 0.4,
+      duration: 3 + i * 0.5,
+    }))
+    setCards(initial)
+
+    const interval = setInterval(() => {
+      setTick(t => t + 1)
+    }, 1200)
+
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
-    const pinTimer = setInterval(() => {
-      const label = PLACES[Math.floor(Math.random() * PLACES.length)]
-      const angle = Math.random() * Math.PI * 2
-      const r = Math.random() * 55 + 10
-      const cx = 90 + Math.cos(angle) * r
-      const cy = 90 + Math.sin(angle) * r * 0.45
-      const id = Date.now()
-
-      setPins(prev => [...prev.slice(-8), { id, cx, cy, label, visible: true }])
-
-      setTimeout(() => {
-        setPins(prev => prev.map(p => p.id === id ? { ...p, visible: false } : p))
-      }, 2500)
-    }, 700)
-    return () => clearInterval(pinTimer)
-  }, [])
-
-  useEffect(() => {
-    if (postsScanned === 0) return
-    const t = setInterval(() => {
-      setCounter(c => Math.min(c + 1, postsScanned))
-    }, 80)
-    return () => clearInterval(t)
-  }, [postsScanned])
-
-  const phaseLabels = [
-    '🛰️ Skanowanie Reddit...',
-    '📡 Odebrano dane...',
-    '🧠 Analizuję posty...',
-    '📍 Mapowanie miejsc...',
-  ]
-
-  // Siatka kuli — południki i równoleżniki
-  const meridians = Array.from({ length: 8 }, (_, i) => {
-    const angle = (i / 8) * 360 + rotation
-    const rad = (angle * Math.PI) / 180
-    const rx = Math.abs(Math.cos(rad)) * 78
-    return { rx, key: i, opacity: 0.15 + Math.abs(Math.cos(rad)) * 0.35 }
-  })
-
-  const parallels = [-50, -30, -10, 10, 30, 50]
+    setCards(prev => {
+      const newId = Date.now()
+      const newCard: FloatingCard = {
+        id: newId,
+        card: CARDS[newId % CARDS.length],
+        x: 8 + Math.random() * 75,
+        delay: 0,
+        duration: 2.8 + Math.random() * 1.2,
+      }
+      return [...prev.slice(-5), newCard]
+    })
+  }, [tick])
 
   return (
-    <div className="flex flex-col items-center py-6 px-4 select-none">
-      {/* Kula */}
-      <div className="relative mb-5">
-        <svg width="180" height="180" viewBox="0 0 180 180">
-          <defs>
-            <radialGradient id="globeGrad" cx="40%" cy="35%">
-              <stop offset="0%" stopColor="#2d6331" stopOpacity="0.9" />
-              <stop offset="60%" stopColor="#1a341d" stopOpacity="0.95" />
-              <stop offset="100%" stopColor="#0f1f10" stopOpacity="1" />
-            </radialGradient>
-            <radialGradient id="shineGrad" cx="35%" cy="30%">
-              <stop offset="0%" stopColor="#5e9e61" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#5e9e61" stopOpacity="0" />
-            </radialGradient>
-            <clipPath id="globeClip">
-              <circle cx="90" cy="90" r="78" />
-            </clipPath>
-          </defs>
+    <div className="flex flex-col items-center py-8 px-4">
+      {/* Obszar z kartami */}
+      <div className="relative w-full max-w-sm h-40 mb-6 overflow-hidden rounded-2xl bg-gradient-to-b from-stone-900/80 to-stone-950/60 border border-stone-800/60">
+        {/* Subtelny gradient na dole */}
+        <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-stone-950 to-transparent z-10" />
 
-          {/* Tło kuli */}
-          <circle cx="90" cy="90" r="78" fill="url(#globeGrad)" />
-
-          {/* Siatka — równoleżniki */}
-          <g clipPath="url(#globeClip)" opacity="0.3">
-            {parallels.map((y, i) => (
-              <ellipse
-                key={i}
-                cx="90"
-                cy={90 + y * 0.9}
-                rx="78"
-                ry={Math.abs(Math.cos((y * Math.PI) / 180)) * 20 + 5}
-                fill="none"
-                stroke="#3d7f41"
-                strokeWidth="0.8"
-              />
-            ))}
-          </g>
-
-          {/* Siatka — południki (obracają się) */}
-          <g clipPath="url(#globeClip)">
-            {meridians.map(m => (
-              <ellipse
-                key={m.key}
-                cx="90"
-                cy="90"
-                rx={m.rx}
-                ry="78"
-                fill="none"
-                stroke="#3d7f41"
-                strokeWidth="0.8"
-                opacity={m.opacity}
-              />
-            ))}
-          </g>
-
-          {/* Połysk */}
-          <circle cx="90" cy="90" r="78" fill="url(#shineGrad)" />
-
-          {/* Ramka */}
-          <circle cx="90" cy="90" r="78" fill="none" stroke="#3d7f41" strokeWidth="1.5" opacity="0.6" />
-
-          {/* Pinezki */}
-          {pins.map(pin => (
-            <g
-              key={pin.id}
-              style={{
-                transition: 'opacity 0.4s ease',
-                opacity: pin.visible ? 1 : 0,
-              }}
-            >
-              <circle cx={pin.cx} cy={pin.cy} r="3" fill="#3d7f41" />
-              <circle cx={pin.cx} cy={pin.cy} r="6" fill="none" stroke="#3d7f41" strokeWidth="1" opacity="0.5">
-                <animate attributeName="r" values="3;10;3" dur="1.5s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="0.5;0;0.5" dur="1.5s" repeatCount="indefinite" />
-              </circle>
-              <line x1={pin.cx} y1={pin.cy - 3} x2={pin.cx} y2={pin.cy - 10} stroke="#5e9e61" strokeWidth="0.8" />
-            </g>
-          ))}
-        </svg>
-
-        {/* Etykiety pinezek */}
-        {pins.filter(p => p.visible).slice(-3).map(pin => (
+        {cards.map(fc => (
           <div
-            key={pin.id}
-            className="absolute text-xs text-forest-300 bg-stone-900/80 px-1.5 py-0.5 rounded-full border border-forest-700/30 whitespace-nowrap pointer-events-none animate-fade-up"
+            key={fc.id}
+            className="absolute bottom-0"
             style={{
-              left: `${(pin.cx / 180) * 100}%`,
-              top: `${(pin.cy / 180) * 100 - 15}%`,
-              transform: 'translate(-50%, -100%)',
+              left: `${fc.x}%`,
+              animation: `floatUp ${fc.duration}s ease-out ${fc.delay}s forwards`,
             }}
           >
-            {pin.label}
+            <div className={`flex items-center gap-1.5 bg-gradient-to-br ${fc.card.color} border border-stone-700/30 backdrop-blur-sm rounded-xl px-2.5 py-1.5 shadow-lg`}>
+              <span className="text-base leading-none">{fc.card.icon}</span>
+              <span className="text-stone-200 text-xs font-medium whitespace-nowrap">{fc.card.label}</span>
+            </div>
           </div>
         ))}
+
+        {/* Pulsujące tło */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-5">
+          <div className="w-32 h-32 rounded-full border-2 border-forest-400 animate-ping" style={{ animationDuration: '3s' }} />
+        </div>
       </div>
 
       {/* Status */}
-      <div className="flex items-center gap-3 bg-stone-800/60 border border-stone-700/40 rounded-2xl px-5 py-3 mb-3 w-full max-w-xs">
-        <div className="flex-1">
+      <div className="w-full max-w-sm bg-stone-800/50 border border-stone-700/40 rounded-2xl px-5 py-3.5 mb-3">
+        <div className="flex items-center justify-between mb-2">
           <p className="text-stone-200 text-sm font-medium">
-            {phaseLabels[Math.min(phase, phaseLabels.length - 1)]}
+            {PHASE_LABELS[Math.min(phase, PHASE_LABELS.length - 1)]}
           </p>
-          <div className="flex gap-1 mt-2">
-            {phaseLabels.map((_, i) => (
-              <div
-                key={i}
-                className="h-1 rounded-full transition-all duration-500"
-                style={{
-                  width: i <= phase ? '24px' : '8px',
-                  background: i <= phase ? '#3d7f41' : '#44403c',
-                }}
-              />
-            ))}
-          </div>
+          {postsScanned > 0 && (
+            <span className="text-forest-400 text-xs font-mono bg-forest-900/30 px-2 py-0.5 rounded-full">
+              {postsScanned} postów
+            </span>
+          )}
         </div>
-        {postsScanned > 0 && (
-          <div className="text-right flex-shrink-0">
-            <p className="text-forest-400 text-lg font-bold font-mono">{counter}</p>
-            <p className="text-stone-600 text-xs">postów</p>
-          </div>
-        )}
+        {/* Progress dots */}
+        <div className="flex gap-1.5">
+          {PHASE_LABELS.map((_, i) => (
+            <div
+              key={i}
+              className="h-1 rounded-full transition-all duration-700"
+              style={{
+                flex: i <= phase ? 2 : 1,
+                background: i <= phase ? '#3d7f41' : '#44403c',
+              }}
+            />
+          ))}
+        </div>
       </div>
 
       <p className="text-stone-600 text-xs text-center">
-        Szukam ukrytych perełek Słowenii i Budapesztu...
+        Szukam ukrytych perełek dopasowanych do Waszej ekipy...
       </p>
+
+      <style>{`
+        @keyframes floatUp {
+          0% { transform: translateY(0) scale(0.8); opacity: 0; }
+          15% { opacity: 1; transform: translateY(-10px) scale(1); }
+          80% { opacity: 0.9; }
+          100% { transform: translateY(-140px) scale(0.9); opacity: 0; }
+        }
+      `}</style>
     </div>
   )
 }

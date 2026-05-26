@@ -421,9 +421,10 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       .eq('room_id', room.id)
       .order('created_at', { ascending: false })
       .limit(1)
-    if (data && data.length > 0) {
+    if (data && data.length > 0 && (data[0].places || []).length > 0) {
       setAiPlaces(data[0].places || [])
       setPostsScanned(data[0].posts_analyzed || 0)
+      setResultsVisible(true)
     }
   }
 

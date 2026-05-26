@@ -390,6 +390,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
   const [loading, setLoading] = useState(false)
+  const [searchCount, setSearchCount] = useState(0)
   const [fadingOut, setFadingOut] = useState(false)
   const [resultsVisible, setResultsVisible] = useState(false)
   const [scanPhase, setScanPhase] = useState(0)
@@ -492,6 +493,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setError('')
     setAiPlaces([])
     setResultsVisible(false)
+    setScanPhase(0)
+    setPostsScanned(0)
+    setSearchCount(c => c + 1)
     setScanPhase(0)
     setPostsScanned(0)
 
@@ -665,7 +669,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         transition: 'opacity .5s ease',
         display: loading ? 'block' : 'none',
       }}>
-        <GlobeAnimation postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />
+        <GlobeAnimation key={searchCount} postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />
       </div>
 
       {/* Błąd */}

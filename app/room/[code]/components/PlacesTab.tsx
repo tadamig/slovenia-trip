@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase, SavedPlace, Room, UserPreference } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
-import { Search, Heart, MessageSquare, MapPin, ExternalLink, ChevronDown, Filter, Loader2, Star } from 'lucide-react'
+import { Heart, MessageSquare, Star, MapPin, ExternalLink, ChevronDown, Filter, RefreshCw } from 'lucide-react'
 
 interface Props {
   room: Room
@@ -11,199 +11,322 @@ interface Props {
   allPrefs: UserPreference[]
 }
 
-interface RedditPost {
-  title: string
-  score: number
-  url: string
-  subreddit: string
-  selftext?: string
-}
-
-interface PlaceCard {
+interface AIPlace {
   name: string
   description: string
+  whyThisGroup: string
   tags: string[]
   region: 'budapest' | 'slovenia'
-  coordinates?: [number, number]
-  sources: number
+  subregion: string
+  estimatedCost: 'free' | 'cheap' | 'moderate' | 'expensive'
+  bestTimeOfDay: string
+  sourceCount: number
   sentiment: string
-  redditLinks: string[]
+  sources: { title: string; url: string; score: number; subreddit: string }[]
 }
 
 const ACTIVITY_TAGS: Record<string, string> = {
-  sup: '🏄 SUP',
-  trekking: '🥾 Trekking',
-  food: '🍽️ Jedzenie',
-  sunset: '🌅 Widok',
-  sightseeing: '🏛️ Zwiedzanie',
-  relax: '🧘 Relaks',
-  photo: '📸 Foto',
-  cycling: '🚴 Rower',
-  markets: '🛒 Targi',
-  nightlife: '🍺 Nocne życie',
+  sup: '🏄 SUP', trekking: '🥾 Trekking', food: '🍽️ Jedzenie',
+  sunset: '🌅 Widok', sightseeing: '🏛️ Zwiedzanie', relax: '🧘 Relaks',
+  photo: '📸 Foto', markets: '🛒 Targi', nightlife: '🍺 Nocne życie',
+  cycling: '🚴 Rower', van: '🏕️ Van spot', tent: '⛺ Camping',
 }
 
-// Kuratowane miejsca — baza startowa zwalidowana przez wiele źródeł
-const CURATED_PLACES: PlaceCard[] = [
-  // Słowenia
-  {
-    name: 'Jezioro Bled',
-    description: 'Ikoniczne jezioro z zamkiem i wyspą — idealne na SUP i fotografię o świcie.',
-    tags: ['sup', 'sunset', 'photo', 'sightseeing'],
-    region: 'slovenia',
-    coordinates: [46.3683, 14.1146],
-    sources: 47,
-    sentiment: 'wspomniane 47 razy, głównie pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Rzeka Soča',
-    description: 'Turkusowa rzeka w Alpach Julijskich — rafting, SUP i kąpiel w krystalicznie czystej wodzie.',
-    tags: ['sup', 'trekking', 'photo'],
-    region: 'slovenia',
-    coordinates: [46.1637, 13.5739],
-    sources: 38,
-    sentiment: 'wspomniane 38 razy, bardzo pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Vintgar Gorge',
-    description: 'Przełom rzeki Radovny — drewniane kładki nad wodospadami i szmaragdową rzeką.',
-    tags: ['trekking', 'photo', 'sightseeing'],
-    region: 'slovenia',
-    coordinates: [46.4000, 14.0833],
-    sources: 29,
-    sentiment: 'wspomniane 29 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Park Triglav — Dolina Vrat',
-    description: 'Widok na północną ścianę Triglavu — klasyczny trek z tabliczką Almauerska.',
-    tags: ['trekking', 'photo', 'sunset'],
-    region: 'slovenia',
-    coordinates: [46.4167, 13.8667],
-    sources: 22,
-    sentiment: 'wspomniane 22 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Bohinjsko jezero',
-    description: 'Spokojniejsza alternatywa dla Bledu — idealne na SUP bez tłumów turystów.',
-    tags: ['sup', 'relax', 'photo', 'van'],
-    region: 'slovenia',
-    coordinates: [46.2833, 13.8833],
-    sources: 31,
-    sentiment: 'wspomniane 31 razy, bardzo pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Predjamski Zamek',
-    description: 'Zamek w jaskini — jeden z najbardziej niezwykłych zamków na świecie.',
-    tags: ['sightseeing', 'photo'],
-    region: 'slovenia',
-    coordinates: [45.8167, 14.1167],
-    sources: 18,
-    sentiment: 'wspomniane 18 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Restauracja Gostilna Lectar (Radovljica)',
-    description: 'Tradycyjna słoweńska kuchnia — žlikrofi, kraška pršut i lokalne wino.',
-    tags: ['food', 'markets'],
-    region: 'slovenia',
-    coordinates: [46.3444, 14.1722],
-    sources: 14,
-    sentiment: 'wspomniane 14 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Plaża Strunjan',
-    description: 'Klifowa plaża na Adriatyku — dobry spot na SUP z widokiem na Piran.',
-    tags: ['sup', 'relax', 'sunset'],
-    region: 'slovenia',
-    coordinates: [45.5317, 13.6083],
-    sources: 12,
-    sentiment: 'wspomniane 12 razy, pozytywnie',
-    redditLinks: [],
-  },
-  // Budapeszt
-  {
-    name: 'Szechenyi Thermal Bath',
-    description: 'Najsłynniejsze termy w Budapeszcie — idealne po długiej jeździe vanem.',
-    tags: ['relax', 'sightseeing'],
-    region: 'budapest',
-    coordinates: [47.5186, 19.0826],
-    sources: 41,
-    sentiment: 'wspomniane 41 razy, głównie pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Ruin Bar Szimpla Kert',
-    description: 'Kultowy ruin bar w Dzielnicy Żydowskiej — obowiązkowy punkt w Budapeszcie.',
-    tags: ['nightlife', 'sightseeing'],
-    region: 'budapest',
-    coordinates: [47.4994, 19.0650],
-    sources: 35,
-    sentiment: 'wspomniane 35 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Targ Wielka Hala (Nagy Vásárcsarnok)',
-    description: 'Historyczna hala targowa — papryka, langos, lokalne produkty i pamiątki.',
-    tags: ['food', 'markets', 'sightseeing'],
-    region: 'budapest',
-    coordinates: [47.4875, 19.0594],
-    sources: 27,
-    sentiment: 'wspomniane 27 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Wzgórze Gellérta — Zachód słońca',
-    description: 'Najlepszy punkt widokowy na Budapeszt — idealne miejsce na zachód słońca nad Dunajem.',
-    tags: ['sunset', 'photo', 'trekking'],
-    region: 'budapest',
-    coordinates: [47.4871, 19.0463],
-    sources: 23,
-    sentiment: 'wspomniane 23 razy, pozytywnie',
-    redditLinks: [],
-  },
-  {
-    name: 'Dunaj — Kajak / SUP',
-    description: 'Wypożyczalnie kajaków i SUP na Dunaju — widok na Parlament z wody.',
-    tags: ['sup', 'photo'],
-    region: 'budapest',
-    coordinates: [47.5074, 19.0464],
-    sources: 11,
-    sentiment: 'wspomniane 11 razy, pozytywnie',
-    redditLinks: [],
-  },
-]
+const COST_LABEL: Record<string, string> = {
+  free: '🆓 Bezpłatne', cheap: '💸 Tanie', moderate: '💰 Średnie', expensive: '💎 Drogie',
+}
 
-const MIN_SOURCES = 3
+const Slovenia_SPOTS = ['Bled', 'Bohinj', 'Soča', 'Ljubljana', 'Piran', 'Triglav', 'Kranjska Gora', 'Kobarid', 'Koper', 'Portorož']
+const BUDAPEST_SPOTS = ['Budapeszt', 'Buda', 'Pest', 'Óbuda']
 
+// ——— ANIMACJA SKANOWANIA ———
+function ScanAnimation({ postsScanned, phase }: { postsScanned: number; phase: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>()
+  const [visibleSpots, setVisibleSpots] = useState<{ name: string; x: number; y: number; alpha: number }[]>([])
+
+  // Punkty na "mapie" Słowenii
+  const mapPoints = [
+    { name: 'Bled', x: 0.28, y: 0.22 },
+    { name: 'Bohinj', x: 0.22, y: 0.28 },
+    { name: 'Soča', x: 0.18, y: 0.38 },
+    { name: 'Ljubljana', x: 0.42, y: 0.42 },
+    { name: 'Triglav', x: 0.25, y: 0.18 },
+    { name: 'Piran', x: 0.28, y: 0.72 },
+    { name: 'Kobarid', x: 0.15, y: 0.32 },
+    { name: 'Kranjska Gora', x: 0.22, y: 0.12 },
+    { name: 'Maribor', x: 0.72, y: 0.18 },
+    { name: 'Koper', x: 0.25, y: 0.78 },
+    { name: 'Budapeszt', x: 0.82, y: 0.28 },
+    { name: 'Portorož', x: 0.22, y: 0.82 },
+  ]
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const spot = mapPoints[Math.floor(Math.random() * mapPoints.length)]
+      setVisibleSpots(prev => {
+        const existing = prev.find(s => s.name === spot.name)
+        if (existing) return prev
+        return [...prev.slice(-6), { ...spot, alpha: 1 }]
+      })
+    }, 600)
+    return () => clearInterval(interval)
+  }, [])
+
+  const phases = [
+    { icon: '🛰️', text: 'Skanowanie Reddit...', color: '#3d7f41' },
+    { icon: '📡', text: `Odebrano ${postsScanned} postów`, color: '#0085cc' },
+    { icon: '🧠', text: 'AI analizuje dane...', color: '#8b5cf6' },
+    { icon: '📍', text: 'Mapowanie rekomendacji...', color: '#e09f4d' },
+  ]
+
+  const currentPhase = phases[Math.min(phase, phases.length - 1)]
+
+  return (
+    <div className="flex flex-col items-center justify-center py-8 px-4">
+      {/* Mapa Słowenii - SVG */}
+      <div className="relative w-full max-w-sm h-48 mb-6">
+        <svg viewBox="0 0 400 220" className="w-full h-full opacity-20">
+          {/* Uproszczony zarys Słowenii */}
+          <path d="M60,80 L80,60 L120,50 L160,45 L200,48 L240,55 L280,60 L320,70 L340,80 L330,100 L310,115 L280,120 L260,130 L240,145 L220,160 L200,170 L180,165 L160,155 L140,150 L120,160 L100,155 L80,140 L65,120 L60,100 Z" fill="#3d7f41" stroke="#3d7f41" strokeWidth="2"/>
+          {/* Węgry */}
+          <path d="M300,50 L380,55 L390,80 L385,110 L370,120 L340,115 L320,100 L310,80 Z" fill="#0085cc" opacity="0.5" stroke="#0085cc" strokeWidth="1"/>
+        </svg>
+
+        {/* Pinezki pojawiające się na mapie */}
+        {visibleSpots.map((spot, i) => (
+          <div
+            key={spot.name}
+            className="absolute flex flex-col items-center animate-fade-up"
+            style={{
+              left: `${spot.x * 100}%`,
+              top: `${spot.y * 100}%`,
+              transform: 'translate(-50%, -100%)',
+            }}
+          >
+            <div className="bg-forest-500 text-white text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap font-medium shadow-lg">
+              {spot.name}
+            </div>
+            <div className="w-1.5 h-1.5 bg-forest-400 rounded-full mt-0.5 animate-pulse" />
+          </div>
+        ))}
+
+        {/* Latający skaner */}
+        <div
+          className="absolute w-full h-0.5 bg-gradient-to-r from-transparent via-forest-400 to-transparent opacity-60"
+          style={{
+            top: `${((Date.now() / 1000) % 1) * 100}%`,
+            animation: 'scanLine 2s linear infinite',
+          }}
+        />
+      </div>
+
+      {/* Status */}
+      <div className="flex items-center gap-3 bg-stone-800/60 border border-stone-700/40 rounded-2xl px-5 py-3 mb-4">
+        <span className="text-2xl animate-pulse-soft">{currentPhase.icon}</span>
+        <div>
+          <p className="text-stone-200 text-sm font-medium">{currentPhase.text}</p>
+          <div className="flex gap-1 mt-1.5">
+            {phases.map((p, i) => (
+              <div
+                key={i}
+                className="h-1 rounded-full transition-all duration-500"
+                style={{
+                  width: i <= phase ? '24px' : '8px',
+                  background: i <= phase ? currentPhase.color : '#44403c',
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <p className="text-stone-600 text-xs text-center">
+        Przeszukuję Reddit, analizuję rekomendacje ekipy...
+      </p>
+
+      <style>{`
+        @keyframes scanLine {
+          0% { top: 0% }
+          100% { top: 100% }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ——— KARTA MIEJSCA ———
+function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote, onAddNote, sessionId }: {
+  place: AIPlace
+  groupActivities: string[]
+  isSaved: boolean
+  onSave: () => void
+  savedData?: SavedPlace
+  onVote: () => void
+  onAddNote: (text: string) => void
+  sessionId: string
+}) {
+  const [showNotes, setShowNotes] = useState(false)
+  const [noteText, setNoteText] = useState('')
+  const [showSources, setShowSources] = useState(false)
+  const matches = place.tags.filter(t => groupActivities.includes(t))
+  const isMatch = matches.length > 0
+
+  return (
+    <div className={`rounded-2xl border p-4 space-y-3 transition-all ${
+      isMatch ? 'bg-forest-900/15 border-forest-700/40' : 'bg-stone-800/40 border-stone-700/40'
+    }`}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              place.region === 'budapest'
+                ? 'bg-sand-800/40 text-sand-400 border border-sand-700/30'
+                : 'bg-forest-800/40 text-forest-400 border border-forest-700/30'
+            }`}>
+              {place.region === 'budapest' ? '🇭🇺' : '🇸🇮'} {place.subregion || (place.region === 'budapest' ? 'Budapeszt' : 'Słowenia')}
+            </span>
+            {isMatch && (
+              <span className="text-xs text-forest-500 bg-forest-800/20 px-2 py-0.5 rounded-full border border-forest-700/20">
+                ✓ pasuje do ekipy
+              </span>
+            )}
+          </div>
+          <h3 className="font-display text-base font-semibold text-stone-100">{place.name}</h3>
+        </div>
+        <button
+          onClick={onSave}
+          className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+            isSaved
+              ? 'bg-forest-700/30 border border-forest-600/40 text-forest-400'
+              : 'bg-stone-700 border border-stone-600 text-stone-300 hover:bg-forest-700/20 hover:border-forest-600/40'
+          }`}
+        >
+          <Heart className={`w-3.5 h-3.5 ${isSaved ? 'fill-forest-400' : ''}`} />
+          {isSaved ? 'Zapisano' : 'Zapisz'}
+        </button>
+      </div>
+
+      {/* Description */}
+      <p className="text-stone-400 text-xs leading-relaxed">{place.description}</p>
+
+      {/* Why this group */}
+      {place.whyThisGroup && (
+        <div className="bg-stone-800/60 rounded-xl px-3 py-2 border border-stone-700/30">
+          <p className="text-stone-300 text-xs">💡 {place.whyThisGroup}</p>
+        </div>
+      )}
+
+      {/* Tags + cost */}
+      <div className="flex flex-wrap gap-1.5">
+        {place.tags.map(tag => (
+          <span key={tag} className={`text-xs px-2 py-0.5 rounded-full ${
+            groupActivities.includes(tag)
+              ? 'bg-forest-800/40 text-forest-300 border border-forest-700/30'
+              : 'bg-stone-800 text-stone-500 border border-stone-700/30'
+          }`}>
+            {ACTIVITY_TAGS[tag] || tag}
+          </span>
+        ))}
+        {place.estimatedCost && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-stone-800 text-stone-500 border border-stone-700/30">
+            {COST_LABEL[place.estimatedCost] || place.estimatedCost}
+          </span>
+        )}
+      </div>
+
+      {/* Sources + sentiment */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setShowSources(!showSources)}
+          className="flex items-center gap-1.5 text-stone-500 hover:text-stone-300 text-xs transition-colors"
+        >
+          <Star className="w-3 h-3" />
+          {place.sourceCount}x na Reddit · {place.sentiment}
+          <ChevronDown className={`w-3 h-3 transition-transform ${showSources ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+
+      {/* Reddit sources */}
+      {showSources && place.sources?.length > 0 && (
+        <div className="space-y-1.5 border-t border-stone-700/40 pt-2">
+          {place.sources.map((s, i) => (
+            <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-2 text-xs text-water-400 hover:text-water-300 transition-colors">
+              <ExternalLink className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{s.title}</span>
+              <span className="text-stone-600 flex-shrink-0">↑{s.score}</span>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {/* Saved place actions */}
+      {savedData && (
+        <div className="border-t border-stone-700/40 pt-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <button onClick={onVote}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs transition-all ${
+                (savedData.voters as string[]).includes(sessionId)
+                  ? 'bg-water-700/20 border border-water-600/40 text-water-300'
+                  : 'bg-stone-800 border border-stone-700 text-stone-500 hover:text-stone-300'
+              }`}>
+              👍 {savedData.votes}
+            </button>
+            <button onClick={() => setShowNotes(!showNotes)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-stone-800 border border-stone-700 text-stone-500 hover:text-stone-300 transition-all">
+              <MessageSquare className="w-3 h-3" />
+              {(savedData.notes as any[]).length > 0 ? `${(savedData.notes as any[]).length} notatki` : 'Notatka'}
+            </button>
+          </div>
+          {(savedData.notes as any[]).length > 0 && showNotes && (
+            <div className="space-y-1">
+              {(savedData.notes as any[]).map((note: any, i: number) => (
+                <div key={i} className="bg-stone-800/60 rounded-lg px-3 py-2">
+                  <p className="text-stone-500 text-xs">{note.user_name}: <span className="text-stone-300">{note.text}</span></p>
+                </div>
+              ))}
+            </div>
+          )}
+          {showNotes && (
+            <div className="flex gap-2">
+              <input type="text" value={noteText} onChange={e => setNoteText(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && noteText.trim() && (onAddNote(noteText), setNoteText(''))}
+                placeholder="Twoja notatka..."
+                className="flex-1 bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500" />
+              <button onClick={() => { if (noteText.trim()) { onAddNote(noteText); setNoteText('') } }}
+                className="bg-forest-600 hover:bg-forest-500 text-white px-3 py-2 rounded-lg text-xs">Dodaj</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ——— GŁÓWNY KOMPONENT ———
 export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
+  const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
-  const [redditResults, setRedditResults] = useState<PlaceCard[]>([])
   const [loading, setLoading] = useState(false)
-  const [redditLoading, setRedditLoading] = useState(false)
-  const [showAll, setShowAll] = useState(false)
+  const [scanPhase, setScanPhase] = useState(0)
+  const [postsScanned, setPostsScanned] = useState(0)
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
-  const [noteText, setNoteText] = useState<Record<string, string>>({})
-  const [showNoteFor, setShowNoteFor] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  const [error, setError] = useState('')
   const sessionId = getSessionId()
 
-  // Agreguj aktywności z całej ekipy
   const groupActivities = (() => {
     const completed = allPrefs.filter(p => p.completed)
     if (completed.length === 0) return myPrefs.activities || []
     const counts: Record<string, number> = {}
     completed.forEach(p => (p.activities || []).forEach(a => { counts[a] = (counts[a] || 0) + 1 }))
-    return Object.entries(counts).filter(([, c]) => c >= Math.ceil(completed.length / 2)).map(([id]) => id)
+    return Object.entries(counts).filter(([, c]) => c >= 1).map(([id]) => id)
   })()
 
   useEffect(() => {
     loadSavedPlaces()
-    fetchRedditPlaces()
   }, [room.id])
 
   async function loadSavedPlaces() {
@@ -211,299 +334,111 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setSavedPlaces(data || [])
   }
 
-  async function fetchRedditPlaces() {
-    setRedditLoading(true)
-    const queries = [
-      'Slovenia SUP lake swimming',
-      'Slovenia hiking trekking trails',
-      'Budapest food local restaurants',
-      'Bled lake activities',
-      'Soča river adventure',
-    ]
-    const found: Map<string, { count: number; score: number; links: string[] }> = new Map()
+  async function handleSearch() {
+    setLoading(true)
+    setError('')
+    setAiPlaces([])
+    setScanPhase(0)
+
+    // Animacja faz
+    const phaseTimer = setInterval(() => {
+      setScanPhase(p => Math.min(p + 1, 3))
+    }, 1800)
+
+    // Symuluj licznik postów
+    const postTimer = setInterval(() => {
+      setPostsScanned(p => Math.min(p + Math.floor(Math.random() * 5 + 1), 25))
+    }, 300)
 
     try {
-      for (const q of queries) {
-        try {
-          // Używamy API route żeby ominąć CORS
-          const res = await fetch(`/api/reddit?q=${encodeURIComponent(q)}`)
-          if (!res.ok) continue
-          const data = await res.json()
-          const posts: RedditPost[] = data.posts || []
+      const tripDays = room.start_date && room.end_date
+        ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
+        : null
 
-          // Wyciągnij miejsca z tytułów postów
-          const placePatterns = [
-            /Lake (\w+)/gi, /(\w+) Lake/gi, /(\w+) Gorge/gi,
-            /(\w+) Falls/gi, /Waterfall (\w+)/gi, /Trail (\w+)/gi,
-            /(\w+) National Park/gi, /River (\w+)/gi,
-          ]
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activities: groupActivities,
+          region: activeRegion === 'all' ? 'slovenia' : activeRegion,
+          transport: myPrefs.accommodation,
+          accommodation: myPrefs.accommodation,
+          intensity: myPrefs.intensity,
+          numPeople: room.num_people || 4,
+          startDate: room.start_date,
+          endDate: room.end_date,
+          tripDays,
+        }),
+      })
 
-          posts.filter(p => p.score >= 10).forEach(post => {
-            placePatterns.forEach(patternDef => {
-              const re = new RegExp(patternDef.source, patternDef.flags)
-              let match
-              while ((match = re.exec(post.title)) !== null) {
-                const key = match[0].toLowerCase()
-                const existing = found.get(key) || { count: 0, score: 0, links: [] }
-                found.set(key, {
-                  count: existing.count + 1,
-                  score: Math.max(existing.score, post.score),
-                  links: [...existing.links, `https://reddit.com${post.url || ''}`].slice(0, 3),
-                })
-              }
-            })
-          })
-        } catch { /* pojedynczy query może zawieść */ }
-      }
-    } catch { /* brak internetu */ }
+      clearInterval(phaseTimer)
+      clearInterval(postTimer)
 
-    // Filtruj przez próg MIN_SOURCES
-    const validated = Array.from(found.entries())
-      .filter(([, v]) => v.count >= MIN_SOURCES || v.score >= 50)
-      .slice(0, 5)
-      .map(([name, v]) => ({
-        name: name.charAt(0).toUpperCase() + name.slice(1),
-        description: `Znaleziono na Reddit — ${v.count} wzmiank${v.count === 1 ? 'a' : 'i'} w społeczności`,
-        tags: ['trekking', 'photo'],
-        region: 'slovenia' as const,
-        sources: v.count,
-        sentiment: `wspomniane ${v.count} razy, score ${v.score}`,
-        redditLinks: v.links,
-      }))
+      if (!res.ok) throw new Error('Błąd API')
+      const data = await res.json()
 
-    setRedditResults(validated)
-    setRedditLoading(false)
+      setScanPhase(4)
+      setPostsScanned(data.postsAnalyzed || 0)
+
+      // Krótka pauza dla efektu "gotowe"
+      await new Promise(r => setTimeout(r, 800))
+      setAiPlaces(data.places || [])
+    } catch (e) {
+      setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
+      clearInterval(phaseTimer)
+      clearInterval(postTimer)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  async function savePlace(place: PlaceCard) {
-    const existing = savedPlaces.find(s => s.place_name === place.name)
-    if (existing) return
-
+  async function savePlace(place: AIPlace) {
+    if (savedPlaces.find(s => s.place_name === place.name)) return
     const { data } = await supabase.from('saved_places').insert({
       room_id: room.id,
       place_name: place.name,
-      place_data: {
-        description: place.description,
-        coordinates: place.coordinates,
-        activities: place.tags,
-        sources: place.sources,
-        sentiment: place.sentiment,
-        region: place.region,
-      },
-      votes: 1,
-      voters: [sessionId],
-      notes: [],
-      tags: place.tags,
+      place_data: { description: place.description, activities: place.tags, sources: place.sourceCount, sentiment: place.sentiment, region: place.region, subregion: place.subregion },
+      votes: 1, voters: [sessionId], notes: [], tags: place.tags,
     }).select().single()
-
     if (data) setSavedPlaces(prev => [...prev, data])
   }
 
-  async function votePlace(placeId: string, currentVoters: string[], currentVotes: number) {
-    const hasVoted = currentVoters.includes(sessionId)
-    const newVoters = hasVoted
-      ? currentVoters.filter(v => v !== sessionId)
-      : [...currentVoters, sessionId]
-    const newVotes = hasVoted ? currentVotes - 1 : currentVotes + 1
-
-    const { data } = await supabase.from('saved_places')
-      .update({ votes: newVotes, voters: newVoters })
-      .eq('id', placeId).select().single()
-
+  async function votePlace(placeId: string, voters: string[], votes: number) {
+    const hasVoted = voters.includes(sessionId)
+    const newVoters = hasVoted ? voters.filter(v => v !== sessionId) : [...voters, sessionId]
+    const { data } = await supabase.from('saved_places').update({ votes: hasVoted ? votes - 1 : votes + 1, voters: newVoters }).eq('id', placeId).select().single()
     if (data) setSavedPlaces(prev => prev.map(p => p.id === placeId ? data : p))
   }
 
-  async function addNote(placeId: string) {
-    const text = noteText[placeId]
-    if (!text?.trim()) return
+  async function addNote(placeId: string, text: string) {
     const place = savedPlaces.find(p => p.id === placeId)
     if (!place) return
-
-    const newNote = {
-      session_id: sessionId,
-      user_name: getSessionName(),
-      text: text.trim(),
-      created_at: new Date().toISOString(),
-    }
-    const newNotes = [...(place.notes as any[] || []), newNote]
-    const { data } = await supabase.from('saved_places')
-      .update({ notes: newNotes }).eq('id', placeId).select().single()
-
+    const newNote = { session_id: sessionId, user_name: getSessionName(), text, created_at: new Date().toISOString() }
+    const { data } = await supabase.from('saved_places').update({ notes: [...(place.notes as any[] || []), newNote] }).eq('id', placeId).select().single()
     if (data) setSavedPlaces(prev => prev.map(p => p.id === placeId ? data : p))
-    setNoteText(prev => ({ ...prev, [placeId]: '' }))
-    setShowNoteFor(null)
   }
 
-  // Filtrowanie miejsc
-  const allPlaces = [...CURATED_PLACES, ...redditResults]
-  const matchingPlaces = allPlaces.filter(p => {
-    const regionOk = activeRegion === 'all' || p.region === activeRegion
-    const tagOk = groupActivities.length === 0 || p.tags.some(t => groupActivities.includes(t))
-    const sourcesOk = p.sources >= MIN_SOURCES
-    return regionOk && tagOk && sourcesOk
-  })
-  const otherPlaces = allPlaces.filter(p => {
-    const regionOk = activeRegion === 'all' || p.region === activeRegion
-    const tagOk = groupActivities.length > 0 && !p.tags.some(t => groupActivities.includes(t))
-    return regionOk && tagOk
-  })
-
-  function isSaved(name: string) {
-    return savedPlaces.some(s => s.place_name === name)
-  }
-
-  function PlaceCardComponent({ place, highlight }: { place: PlaceCard; highlight: boolean }) {
-    const saved = isSaved(place.name)
-    const savedData = savedPlaces.find(s => s.place_name === place.name)
-
-    return (
-      <div className={`rounded-2xl border p-4 space-y-3 transition-all ${
-        highlight
-          ? 'bg-forest-900/15 border-forest-700/40'
-          : 'bg-stone-800/40 border-stone-700/40'
-      }`}>
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                place.region === 'budapest'
-                  ? 'bg-sand-800/40 text-sand-400 border border-sand-700/30'
-                  : 'bg-forest-800/40 text-forest-400 border border-forest-700/30'
-              }`}>
-                {place.region === 'budapest' ? '🇭🇺 Budapeszt' : '🇸🇮 Słowenia'}
-              </span>
-              {highlight && (
-                <span className="text-xs text-forest-500 bg-forest-800/20 px-2 py-0.5 rounded-full border border-forest-700/20">
-                  ✓ pasuje do ekipy
-                </span>
-              )}
-            </div>
-            <h3 className="font-display text-base font-semibold text-stone-100">{place.name}</h3>
-          </div>
-
-          <button
-            onClick={() => saved ? null : savePlace(place)}
-            className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-              saved
-                ? 'bg-forest-700/30 border border-forest-600/40 text-forest-400'
-                : 'bg-stone-700 border border-stone-600 text-stone-300 hover:bg-forest-700/20 hover:border-forest-600/40 hover:text-forest-300'
-            }`}
-          >
-            <Heart className={`w-3.5 h-3.5 ${saved ? 'fill-forest-400' : ''}`} />
-            {saved ? 'Zapisano' : 'Zapisz'}
-          </button>
-        </div>
-
-        {/* Description */}
-        <p className="text-stone-400 text-xs leading-relaxed">{place.description}</p>
-
-        {/* Tags */}
-        <div className="flex flex-wrap gap-1.5">
-          {place.tags.map(tag => (
-            <span
-              key={tag}
-              className={`text-xs px-2 py-0.5 rounded-full ${
-                groupActivities.includes(tag)
-                  ? 'bg-forest-800/40 text-forest-300 border border-forest-700/30'
-                  : 'bg-stone-800 text-stone-500 border border-stone-700/30'
-              }`}
-            >
-              {ACTIVITY_TAGS[tag] || tag}
-            </span>
-          ))}
-        </div>
-
-        {/* Sources */}
-        <div className="flex items-center justify-between">
-          <p className="text-stone-600 text-xs flex items-center gap-1">
-            <Star className="w-3 h-3" /> {place.sentiment}
-          </p>
-          {place.coordinates && (
-            <a
-              href={`https://maps.google.com/?q=${place.coordinates[0]},${place.coordinates[1]}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-water-500 hover:text-water-400 text-xs flex items-center gap-1"
-            >
-              <MapPin className="w-3 h-3" /> Mapa
-            </a>
-          )}
-        </div>
-
-        {/* Saved place actions */}
-        {savedData && (
-          <div className="border-t border-stone-700/40 pt-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => votePlace(savedData.id, savedData.voters as string[], savedData.votes)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs transition-all ${
-                  (savedData.voters as string[]).includes(sessionId)
-                    ? 'bg-water-700/20 border border-water-600/40 text-water-300'
-                    : 'bg-stone-800 border border-stone-700 text-stone-500 hover:text-stone-300'
-                }`}
-              >
-                👍 {savedData.votes}
-              </button>
-              <button
-                onClick={() => setShowNoteFor(showNoteFor === savedData.id ? null : savedData.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-stone-800 border border-stone-700 text-stone-500 hover:text-stone-300 transition-all"
-              >
-                <MessageSquare className="w-3 h-3" />
-                {(savedData.notes as any[]).length > 0 ? `${(savedData.notes as any[]).length} notatki` : 'Dodaj notatkę'}
-              </button>
-            </div>
-
-            {/* Notes */}
-            {(savedData.notes as any[]).length > 0 && (
-              <div className="space-y-1">
-                {(savedData.notes as any[]).map((note: any, i: number) => (
-                  <div key={i} className="bg-stone-800/60 rounded-lg px-3 py-2">
-                    <p className="text-stone-500 text-xs">{note.user_name}: <span className="text-stone-300">{note.text}</span></p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {showNoteFor === savedData.id && (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={noteText[savedData.id] || ''}
-                  onChange={e => setNoteText(prev => ({ ...prev, [savedData.id]: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && addNote(savedData.id)}
-                  placeholder="Twoja notatka..."
-                  className="flex-1 bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 text-xs text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500"
-                />
-                <button
-                  onClick={() => addNote(savedData.id)}
-                  className="bg-forest-600 hover:bg-forest-500 text-white px-3 py-2 rounded-lg text-xs"
-                >
-                  Dodaj
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
+  const filteredPlaces = aiPlaces.filter(p =>
+    activeRegion === 'all' || p.region === activeRegion
+  )
+  const matchingPlaces = filteredPlaces.filter(p => p.tags.some(t => groupActivities.includes(t)))
+  const otherPlaces = filteredPlaces.filter(p => !p.tags.some(t => groupActivities.includes(t)))
 
   return (
     <div className="px-4 py-5 max-w-lg mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg font-semibold text-stone-100">Rekomendacje miejsc</h2>
-        {redditLoading && (
-          <div className="flex items-center gap-1.5 text-stone-500 text-xs">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reddit...
-          </div>
+        {aiPlaces.length > 0 && (
+          <span className="text-xs text-stone-500 bg-stone-800 px-2.5 py-1 rounded-full">
+            {postsScanned} postów
+          </span>
         )}
       </div>
 
-      {/* Active group filters */}
+      {/* Preferencje ekipy */}
       {groupActivities.length > 0 && (
         <div className="bg-forest-900/15 border border-forest-700/30 rounded-xl p-3">
-          <p className="text-forest-400 text-xs mb-2">🎯 Filtrowanie według preferencji ekipy:</p>
+          <p className="text-forest-400 text-xs mb-2">🎯 Szukam dla ekipy:</p>
           <div className="flex flex-wrap gap-1.5">
             {groupActivities.map(a => (
               <span key={a} className="bg-forest-800/40 text-forest-300 text-xs px-2 py-0.5 rounded-full border border-forest-700/30">
@@ -516,96 +451,111 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {/* Region filter */}
       <div className="flex gap-2">
-        {[
-          { id: 'all', label: '🗺️ Wszystkie' },
-          { id: 'budapest', label: '🇭🇺 Budapeszt' },
-          { id: 'slovenia', label: '🇸🇮 Słowenia' },
-        ].map(r => (
-          <button
-            key={r.id}
-            onClick={() => setActiveRegion(r.id as any)}
+        {[{ id: 'all', label: '🗺️ Wszystkie' }, { id: 'budapest', label: '🇭🇺 Budapeszt' }, { id: 'slovenia', label: '🇸🇮 Słowenia' }].map(r => (
+          <button key={r.id} onClick={() => setActiveRegion(r.id as any)}
             className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
-              activeRegion === r.id
-                ? 'bg-stone-700 text-stone-100 border border-stone-600'
-                : 'bg-stone-800/40 text-stone-500 border border-stone-700/40 hover:text-stone-300'
-            }`}
-          >
+              activeRegion === r.id ? 'bg-stone-700 text-stone-100 border border-stone-600' : 'bg-stone-800/40 text-stone-500 border border-stone-700/40'
+            }`}>
             {r.label}
           </button>
         ))}
       </div>
 
-      {/* Matching places */}
-      <div className="space-y-3">
-        {matchingPlaces.length === 0 ? (
-          <div className="text-center py-8 text-stone-600 text-sm">
-            Brak miejsc pasujących do filtrów
-          </div>
-        ) : (
-          matchingPlaces.map(place => (
-            <PlaceCardComponent key={place.name} place={place} highlight={true} />
-          ))
-        )}
-      </div>
+      {/* Przycisk szukaj */}
+      {!loading && (
+        <button onClick={handleSearch}
+          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
+          <RefreshCw className="w-4 h-4" />
+          {aiPlaces.length > 0 ? 'Odśwież rekomendacje' : 'Szukaj rekomendacji dla ekipy'}
+        </button>
+      )}
 
-      {/* Other places toggle */}
-      {otherPlaces.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowAll(!showAll)}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-500 hover:text-stone-300 text-xs transition-all"
-          >
-            <Filter className="w-3.5 h-3.5" />
-            {showAll ? 'Ukryj' : `Pokaż wszystkie (${otherPlaces.length} więcej)`}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAll ? 'rotate-180' : ''}`} />
-          </button>
-          {showAll && (
-            <div className="space-y-3 mt-3">
-              {otherPlaces.map(place => (
-                <PlaceCardComponent key={place.name} place={place} highlight={false} />
+      {/* Animacja skanowania */}
+      {loading && <ScanAnimation postsScanned={postsScanned} phase={scanPhase} />}
+
+      {/* Błąd */}
+      {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
+
+      {/* Wyniki */}
+      {!loading && aiPlaces.length > 0 && (
+        <div className="space-y-4">
+          {/* Pasujące do ekipy */}
+          {matchingPlaces.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs text-forest-400 font-semibold uppercase tracking-wider">
+                ✨ Dopasowane do ekipy ({matchingPlaces.length})
+              </p>
+              {matchingPlaces.map(place => (
+                <PlaceCard
+                  key={place.name}
+                  place={place}
+                  groupActivities={groupActivities}
+                  isSaved={savedPlaces.some(s => s.place_name === place.name)}
+                  onSave={() => savePlace(place)}
+                  savedData={savedPlaces.find(s => s.place_name === place.name)}
+                  onVote={() => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) votePlace(sp.id, sp.voters as string[], sp.votes) }}
+                  onAddNote={text => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) addNote(sp.id, text) }}
+                  sessionId={sessionId}
+                />
               ))}
+            </div>
+          )}
+
+          {/* Inne */}
+          {otherPlaces.length > 0 && (
+            <div>
+              <button onClick={() => setShowAll(!showAll)}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-500 text-xs transition-all">
+                <Filter className="w-3.5 h-3.5" />
+                {showAll ? 'Ukryj' : `Pokaż więcej (${otherPlaces.length})`}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAll ? 'rotate-180' : ''}`} />
+              </button>
+              {showAll && (
+                <div className="space-y-3 mt-3">
+                  {otherPlaces.map(place => (
+                    <PlaceCard key={place.name} place={place} groupActivities={groupActivities}
+                      isSaved={savedPlaces.some(s => s.place_name === place.name)}
+                      onSave={() => savePlace(place)}
+                      savedData={savedPlaces.find(s => s.place_name === place.name)}
+                      onVote={() => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) votePlace(sp.id, sp.voters as string[], sp.votes) }}
+                      onAddNote={text => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) addNote(sp.id, text) }}
+                      sessionId={sessionId}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* Saved places section */}
+      {/* Zapisane */}
       {savedPlaces.length > 0 && (
         <div>
-          <h3 className="text-xs text-stone-500 font-semibold uppercase tracking-wider mb-3">
+          <p className="text-xs text-stone-500 font-semibold uppercase tracking-wider mb-3">
             ❤️ Zapisane przez ekipę ({savedPlaces.length})
-          </h3>
+          </p>
           <div className="space-y-2">
-            {savedPlaces.sort((a, b) => b.votes - a.votes).map(sp => {
-              const curated = CURATED_PLACES.find(p => p.name === sp.place_name)
-              return (
-                <div key={sp.id} className="flex items-center justify-between bg-stone-800/40 border border-stone-700/30 rounded-xl px-4 py-3">
-                  <div>
-                    <p className="text-stone-200 text-sm font-medium">{sp.place_name}</p>
-                    <p className="text-stone-600 text-xs">{(sp.tags as string[]).map(t => ACTIVITY_TAGS[t] || t).join(' · ')}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => votePlace(sp.id, sp.voters as string[], sp.votes)}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all ${
-                        (sp.voters as string[]).includes(sessionId)
-                          ? 'bg-water-700/20 text-water-300'
-                          : 'bg-stone-700 text-stone-400'
-                      }`}
-                    >
-                      👍 {sp.votes}
-                    </button>
-                  </div>
+            {savedPlaces.sort((a, b) => b.votes - a.votes).map(sp => (
+              <div key={sp.id} className="flex items-center gap-3 bg-stone-800/40 border border-stone-700/30 rounded-xl px-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-stone-200 text-sm font-medium truncate">{sp.place_name}</p>
+                  <p className="text-stone-600 text-xs">{(sp.tags as string[]).map(t => ACTIVITY_TAGS[t] || t).join(' · ')}</p>
                 </div>
-              )
-            })}
+                <button onClick={() => votePlace(sp.id, sp.voters as string[], sp.votes)}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all ${
+                    (sp.voters as string[]).includes(sessionId) ? 'bg-water-700/20 text-water-300' : 'bg-stone-700 text-stone-400'
+                  }`}>
+                  👍 {sp.votes}
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Placeholder for more sources */}
       <div className="bg-stone-800/20 border border-dashed border-stone-700/40 rounded-xl p-4 text-center">
-        <p className="text-stone-600 text-xs">🔜 Więcej źródeł wkrótce — TikTok, Twitter/X</p>
+        <p className="text-stone-600 text-xs">🔜 Więcej źródeł wkrótce — TikTok, Google Reviews</p>
       </div>
     </div>
   )

@@ -136,15 +136,25 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
           )}
         </div>
 
-        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3">
+        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3" style={{ position: 'relative' }}>
           <div
             className="h-full rounded-full"
             style={{
               width: `${barWidth}%`,
               background: 'linear-gradient(90deg,#6366f1,#3d7f41,#0891b2,#f59e0b,#ec4899)',
               transition: 'width 1.5s cubic-bezier(.4,0,.2,1)',
+              position: 'relative',
+              overflow: 'hidden',
             }}
-          />
+          >
+            <div style={{
+              position: 'absolute',
+              top: 0, bottom: 0,
+              width: 60,
+              background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent)',
+              animation: 'globeShimmer 1.6s ease-in-out infinite',
+            }} />
+          </div>
         </div>
 
         <div className="flex flex-col gap-1">
@@ -180,6 +190,10 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
         @keyframes globePinIn {
           0%   { opacity:0; transform:scale(.6) translateY(6px); }
           100% { opacity:1; transform:scale(1) translateY(0); }
+        }
+        @keyframes globeShimmer {
+          0%   { left: -60px; }
+          100% { left: 110%; }
         }
         @keyframes globeDotPulse {
           0%,100% { transform:scale(1); opacity:1; }

@@ -2,142 +2,184 @@
 
 import { useEffect, useState } from 'react'
 
-const CARDS = [
-  { icon: '🏔️', label: 'Triglav', color: 'from-forest-900/60 to-forest-800/40' },
-  { icon: '🌊', label: 'Soča', color: 'from-water-900/60 to-water-800/40' },
-  { icon: '🍽️', label: 'Lokalna kuchnia', color: 'from-sand-900/60 to-sand-800/40' },
-  { icon: '📍', label: 'Bled', color: 'from-forest-900/60 to-stone-800/40' },
-  { icon: '🏄', label: 'SUP', color: 'from-water-900/60 to-forest-900/40' },
-  { icon: '🌅', label: 'Zachód słońca', color: 'from-sand-900/60 to-stone-800/40' },
-  { icon: '🥾', label: 'Szlaki', color: 'from-forest-900/60 to-water-900/40' },
-  { icon: '🏛️', label: 'Ljubljana', color: 'from-stone-800/60 to-forest-900/40' },
-  { icon: '🍺', label: 'Lokalne bary', color: 'from-sand-800/60 to-stone-800/40' },
-  { icon: '📸', label: 'Foto spot', color: 'from-water-900/60 to-stone-800/40' },
-]
-
-interface FloatingCard {
-  id: number
-  card: typeof CARDS[0]
-  x: number
-  delay: number
-  duration: number
-}
-
 interface Props {
   phase: number
   postsScanned: number
   totalPosts: number
 }
 
-const PHASE_LABELS = [
-  'Przeszukuję Reddit...',
-  'Odebrano dane...',
-  'DeepSeek analizuje...',
-  'Dopasowuję do ekipy...',
+const STEPS = [
+  { color: '#6366f1', dot: '#6366f1', text: 'Łączenie z Reddit...' },
+  { color: '#4ade80', dot: '#4ade80', text: 'Pobieranie postów z r/Slovenia, r/travel...' },
+  { color: '#22d3ee', dot: '#22d3ee', text: 'DeepSeek analizuje treść postów...' },
+  { color: '#fbbf24', dot: '#fbbf24', text: 'Dopasowuję do preferencji ekipy...' },
+  { color: '#f472b6', dot: '#f472b6', text: 'Generuję rekomendacje...', pulse: true },
 ]
 
+const PINS = [
+  { cx: 96,  cy: 82,  icon: '🏄', stroke: '#4ade80',  label: 'Bohinj',    lx: 109, ly: 73, lw: 46 },
+  { cx: 168, cy: 66,  icon: '🍽️', stroke: '#22d3ee',  label: 'Ljubljana', lx: 118, ly: 48, lw: 44 },
+  { cx: 238, cy: 40,  icon: '🌅', stroke: '#fbbf24',  label: 'Bled',      lx: 186, ly: 22, lw: 36 },
+  { cx: 292, cy: 24,  icon: '🥾', stroke: '#f472b6',  label: 'Triglav',   lx: 238, ly: 7,  lw: 48 },
+]
+
+const SEG_DURATION = 2200
+const SEG_DELAY = 500
+const PIN_DELAY = 200
+
 export default function GlobeAnimation({ phase, postsScanned }: Props) {
-  const [cards, setCards] = useState<FloatingCard[]>([])
-  const [tick, setTick] = useState(0)
+  const [visibleSegs, setVisibleSegs] = useState<number[]>([])
+  const [visiblePins, setVisiblePins] = useState<number[]>([])
+  const [visibleSteps, setVisibleSteps] = useState<number[]>([])
+  const [barWidth, setBarWidth] = useState(0)
 
   useEffect(() => {
-    // Stwórz początkowe karty
-    const initial: FloatingCard[] = Array.from({ length: 4 }, (_, i) => ({
-      id: i,
-      card: CARDS[i % CARDS.length],
-      x: 15 + i * 22,
-      delay: i * 0.4,
-      duration: 3 + i * 0.5,
-    }))
-    setCards(initial)
+    const timers: ReturnType<typeof setTimeout>[] = []
 
-    const interval = setInterval(() => {
-      setTick(t => t + 1)
-    }, 1200)
+    // Segment 1 → Pin 1 → Segment 2 → Pin 2 ...
+    PINS.forEach((_, i) => {
+      const segStart = SEG_DELAY + i * (SEG_DURATION + PIN_DELAY + 600)
+      const pinStart = segStart + SEG_DURATION + PIN_DELAY
+      const stepStart = segStart + 200
 
-    return () => clearInterval(interval)
+      timers.push(setTimeout(() => setVisibleSegs(p => [...p, i]), segStart))
+      timers.push(setTimeout(() => setVisiblePins(p => [...p, i]), pinStart))
+      timers.push(setTimeout(() => setVisibleSteps(p => [...p, i + 1]), stepStart))
+    })
+
+    // Krok 0 od razu
+    timers.push(setTimeout(() => setVisibleSteps(p => [...p, 0]), 100))
+
+    // Ostatni krok
+    const lastStep = SEG_DELAY + PINS.length * (SEG_DURATION + PIN_DELAY + 600) + 400
+    timers.push(setTimeout(() => setVisibleSteps(p => [...p, PINS.length]), lastStep))
+
+    // Pasek
+    const barTargets = [18, 42, 63, 81, 93]
+    barTargets.forEach((target, i) => {
+      timers.push(setTimeout(() => setBarWidth(target), SEG_DELAY + i * (SEG_DURATION + PIN_DELAY + 600) + 400))
+    })
+
+    return () => timers.forEach(clearTimeout)
   }, [])
 
-  useEffect(() => {
-    setCards(prev => {
-      const newId = Date.now()
-      const newCard: FloatingCard = {
-        id: newId,
-        card: CARDS[newId % CARDS.length],
-        x: 8 + Math.random() * 75,
-        delay: 0,
-        duration: 2.8 + Math.random() * 1.2,
-      }
-      return [...prev.slice(-5), newCard]
-    })
-  }, [tick])
+  const totalDuration = SEG_DELAY + PINS.length * (SEG_DURATION + PIN_DELAY + 600)
 
   return (
-    <div className="flex flex-col items-center py-8 px-4">
-      {/* Obszar z kartami */}
-      <div className="relative w-full max-w-sm h-40 mb-6 overflow-hidden rounded-2xl bg-gradient-to-b from-stone-900/80 to-stone-950/60 border border-stone-800/60">
-        {/* Subtelny gradient na dole */}
-        <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-stone-950 to-transparent z-10" />
+    <div className="flex flex-col items-center py-4 px-4">
+      <div className="w-full max-w-sm">
+        <svg width="100%" viewBox="0 0 316 148" style={{ display: 'block', overflow: 'visible', marginBottom: 16 }}>
+          <defs>
+            <linearGradient id="ag1" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#6366f1"/><stop offset="100%" stopColor="#3d7f41"/>
+            </linearGradient>
+            <linearGradient id="ag2" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#3d7f41"/><stop offset="100%" stopColor="#0891b2"/>
+            </linearGradient>
+            <linearGradient id="ag3" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#0891b2"/><stop offset="100%" stopColor="#f59e0b"/>
+            </linearGradient>
+            <linearGradient id="ag4" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#f59e0b"/><stop offset="100%" stopColor="#ec4899"/>
+            </linearGradient>
+          </defs>
 
-        {cards.map(fc => (
-          <div
-            key={fc.id}
-            className="absolute bottom-0"
-            style={{
-              left: `${fc.x}%`,
-              animation: `floatUp ${fc.duration}s ease-out ${fc.delay}s forwards`,
-            }}
-          >
-            <div className={`flex items-center gap-1.5 bg-gradient-to-br ${fc.card.color} border border-stone-700/30 backdrop-blur-sm rounded-xl px-2.5 py-1.5 shadow-lg`}>
-              <span className="text-base leading-none">{fc.card.icon}</span>
-              <span className="text-stone-200 text-xs font-medium whitespace-nowrap">{fc.card.label}</span>
-            </div>
-          </div>
-        ))}
+          {[
+            { d: "M 24,128 C 55,128 65,98 96,82", grad: "url(#ag1)" },
+            { d: "M 96,82 C 127,66 138,86 168,66", grad: "url(#ag2)" },
+            { d: "M 168,66 C 198,46 208,56 238,40", grad: "url(#ag3)" },
+            { d: "M 238,40 C 262,27 272,34 292,24", grad: "url(#ag4)" },
+          ].map((seg, i) => visibleSegs.includes(i) && (
+            <path key={i} d={seg.d} fill="none" stroke={seg.grad} strokeWidth="2.5"
+              strokeDasharray="10 7" strokeLinecap="round"
+              style={{
+                strokeDashoffset: 155,
+                animation: `globeDraw 2.2s cubic-bezier(.4,0,.2,1) forwards`,
+              }}
+            />
+          ))}
 
-        {/* Pulsujące tło */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-5">
-          <div className="w-32 h-32 rounded-full border-2 border-forest-400 animate-ping" style={{ animationDuration: '3s' }} />
-        </div>
-      </div>
+          <circle cx="24" cy="128" r="5" fill="#6366f1" opacity="0.9">
+            <animate attributeName="opacity" values=".9;.4;.9" dur="1.4s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="24" cy="128" r="5" fill="none" stroke="#818cf8" strokeWidth="1">
+            <animate attributeName="r" values="5;14;5" dur="1.4s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".5;0;.5" dur="1.4s" repeatCount="indefinite"/>
+          </circle>
+          <text x="36" y="132" fontSize="10" fill="#4a4845">Start</text>
 
-      {/* Status */}
-      <div className="w-full max-w-sm bg-stone-800/50 border border-stone-700/40 rounded-2xl px-5 py-3.5 mb-3">
+          {PINS.map((pin, i) => visiblePins.includes(i) && (
+            <g key={i} style={{ animation: 'globePinIn .6s cubic-bezier(.25,.46,.45,.94) forwards' }}>
+              <circle cx={pin.cx} cy={pin.cy} r="9" fill="none" stroke={pin.stroke} strokeWidth="1">
+                <animate attributeName="r" values="9;22;9" dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values=".5;0;.5" dur="2s" repeatCount="indefinite"/>
+              </circle>
+              <circle cx={pin.cx} cy={pin.cy} r="11" fill="#111" stroke={pin.stroke} strokeWidth="1.5"/>
+              <text x={pin.cx} y={pin.cy + 4} textAnchor="middle" fontSize="11">{pin.icon}</text>
+              <rect x={pin.lx} y={pin.ly} width={pin.lw} height="17" rx="8.5" fill="#161412" stroke="#2a2826" strokeWidth=".5"/>
+              <text x={pin.lx + pin.lw / 2} y={pin.ly + 12} textAnchor="middle" fontSize="10" fill="#a8a29e">{pin.label}</text>
+            </g>
+          ))}
+        </svg>
+
         <div className="flex items-center justify-between mb-2">
-          <p className="text-stone-200 text-sm font-medium">
-            {PHASE_LABELS[Math.min(phase, PHASE_LABELS.length - 1)]}
-          </p>
+          <span className="text-stone-200 text-sm font-medium tracking-tight">Analizuję rekomendacje...</span>
           {postsScanned > 0 && (
-            <span className="text-forest-400 text-xs font-mono bg-forest-900/30 px-2 py-0.5 rounded-full">
+            <span className="text-xs text-forest-400 bg-forest-900/30 border border-forest-800/40 px-2.5 py-0.5 rounded-full font-mono">
               {postsScanned} postów
             </span>
           )}
         </div>
-        {/* Progress dots */}
-        <div className="flex gap-1.5">
-          {PHASE_LABELS.map((_, i) => (
+
+        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3 relative">
+          <div
+            className="h-full rounded-full relative"
+            style={{
+              width: `${barWidth}%`,
+              background: 'linear-gradient(90deg,#6366f1,#3d7f41,#0891b2,#f59e0b,#ec4899)',
+              transition: 'width 1.5s cubic-bezier(.4,0,.2,1)',
+            }}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          {STEPS.map((step, i) => (
             <div
               key={i}
-              className="h-1 rounded-full transition-all duration-700"
+              className="flex items-center gap-2"
               style={{
-                flex: i <= phase ? 2 : 1,
-                background: i <= phase ? '#3d7f41' : '#44403c',
+                opacity: visibleSteps.includes(i) ? 1 : 0,
+                transform: visibleSteps.includes(i) ? 'translateX(0)' : 'translateX(-6px)',
+                transition: 'opacity .35s ease, transform .35s ease',
               }}
-            />
+            >
+              <div
+                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{
+                  background: step.dot,
+                  animation: step.pulse && visibleSteps.includes(i) ? 'globeDotPulse .9s ease infinite' : 'none',
+                }}
+              />
+              <span className="text-xs" style={{ color: step.pulse && visibleSteps.includes(STEPS.length - 1) ? step.color : '#57534e' }}>
+                {step.text}
+              </span>
+            </div>
           ))}
         </div>
       </div>
 
-      <p className="text-stone-600 text-xs text-center">
-        Szukam ukrytych perełek dopasowanych do Waszej ekipy...
-      </p>
-
       <style>{`
-        @keyframes floatUp {
-          0% { transform: translateY(0) scale(0.8); opacity: 0; }
-          15% { opacity: 1; transform: translateY(-10px) scale(1); }
-          80% { opacity: 0.9; }
-          100% { transform: translateY(-140px) scale(0.9); opacity: 0; }
+        @keyframes globeDraw {
+          from { stroke-dashoffset: 155; }
+          to   { stroke-dashoffset: 0; }
+        }
+        @keyframes globePinIn {
+          0%   { opacity:0; transform:scale(.6) translateY(6px); }
+          100% { opacity:1; transform:scale(1) translateY(0); }
+        }
+        @keyframes globeDotPulse {
+          0%,100% { transform:scale(1); opacity:1; }
+          50%     { transform:scale(1.4); opacity:.6; }
         }
       `}</style>
     </div>

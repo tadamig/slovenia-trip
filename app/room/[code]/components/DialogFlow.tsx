@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Room, UserPreference } from '@/lib/supabase'
+import CityAutocomplete from './CityAutocomplete'
 import { getSessionName, setSessionName } from '@/lib/session'
 import { ChevronRight, ChevronLeft, Check, Users, Compass } from 'lucide-react'
 
@@ -92,7 +93,9 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
   const [endDate, setEndDate] = useState(room.end_date || '')
   const [startDate, setStartDate] = useState(room.start_date || '')
   const [startCity, setStartCity] = useState(room.start_city || '')
-  const [endCity, setEndCity] = useState(room.end_city || 'Ljubljana')
+  const [startCityCountry, setStartCityCountry] = useState(room.start_city_country || '')
+  const [endCity, setEndCity] = useState(room.end_city || '')
+  const [endCityCountry, setEndCityCountry] = useState(room.country || '')
   const [userName, setUserNameLocal] = useState(getSessionName() !== 'Nieznajomy' ? getSessionName() : '')
   const [saving, setSaving] = useState(false)
 
@@ -124,7 +127,7 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
     if (userName.trim()) setSessionName(userName.trim())
     await onComplete(
       { activities, intensity: intensity as any, accommodation: accommodation as any, food, transport, budget },
-      { start_date: startDate || undefined, end_date: endDate || undefined, start_city: startCity, end_city: endCity, transport }
+      { start_date: startDate || undefined, end_date: endDate || undefined, start_city: startCity, end_city: endCity, transport, country: endCityCountry, start_city_country: startCityCountry }
     )
     setSaving(false)
   }
@@ -420,26 +423,18 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
                     />
                   </div>
                 </div>
-                <div>
-                  <label className="text-xs text-stone-500 font-medium block mb-1.5">Miasto startowe</label>
-                  <input
-                    type="text"
-                    value={startCity}
-                    onChange={e => setStartCity(e.target.value)}
-                    placeholder="np. Kraków, Warszawa, Wrocław..."
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 transition-colors text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-stone-500 font-medium block mb-1.5">Docelowe miasto / region końcowy</label>
-                  <input
-                    type="text"
-                    value={endCity}
-                    onChange={e => setEndCity(e.target.value)}
-                    placeholder="np. Ljubljana, Bled, Triglav..."
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 transition-colors text-sm"
-                  />
-                </div>
+                <CityAutocomplete
+                  value={startCity}
+                  onChange={(city, country) => { setStartCity(city); setStartCityCountry(country) }}
+                  label="Miasto startowe"
+                  placeholder="np. Kraków, Warszawa, Wrocław..."
+                />
+                <CityAutocomplete
+                  value={endCity}
+                  onChange={(city, country) => { setEndCity(city); setEndCityCountry(country) }}
+                  label="Miasto docelowe / baza noclegowa"
+                  placeholder="np. Ljubljana, Split, Budva..."
+                />
               </div>
 
               {/* Podsumowanie preferencji */}

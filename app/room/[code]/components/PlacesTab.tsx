@@ -1,6 +1,17 @@
 'use client'
 
 
+// Mapowanie kraju na region dla verify bounds
+function countryToRegion(country: string): string {
+  const c = country.toLowerCase()
+  if (c.includes('hungary') || c.includes('węgry') || c.includes('magyarország')) return 'budapest'
+  if (c.includes('slovenia') || c.includes('słowenia') || c.includes('slovenija')) return 'slovenia'
+  if (c.includes('croatia') || c.includes('chorwacja') || c.includes('hrvatska')) return 'croatia'
+  if (c.includes('austria') || c.includes('austria')) return 'austria'
+  if (c.includes('italy') || c.includes('włochy') || c.includes('italia')) return 'italy'
+  return 'europe' // fallback — Europa ogólnie
+}
+
 const SUBREDDIT_BLACKLIST = new Set([
   'leopardsatemyface','politics','worldnews','news','conspiracy','memes','funny',
   'gaming','sports','nfl','nba','soccer','movies','television','music','stocks',
@@ -554,7 +565,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   async function handleSearchMore() {
     setLoadingMore(true)
     // Szuka kolejnej partii i dodaje do istniejących
-    const region = activeRegion === 'all' ? 'slovenia' : activeRegion
+    const region = activeRegion === 'all'
+      ? countryToRegion(room.country || 'Slovenia')
+      : activeRegion
     let posts: any[] = []
     try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, myPrefs.transport, myPrefs.accommodation, myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4, []) } catch {}
 

@@ -3,8 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY
 
 const REGION_BOUNDS: Record<string, { minLat: number; maxLat: number; minLon: number; maxLon: number }> = {
-  slovenia: { minLat: 45.4, maxLat: 46.9, minLon: 13.3, maxLon: 16.6 },
-  budapest: { minLat: 46.8, maxLat: 48.7, minLon: 16.0, maxLon: 23.0 },
+  slovenia:  { minLat: 45.4, maxLat: 46.9, minLon: 13.3, maxLon: 16.6 },
+  budapest:  { minLat: 46.8, maxLat: 48.7, minLon: 16.0, maxLon: 23.0 },
+  croatia:   { minLat: 42.3, maxLat: 46.6, minLon: 13.4, maxLon: 19.5 },
+  austria:   { minLat: 46.3, maxLat: 49.1, minLon: 9.5,  maxLon: 17.2 },
+  italy:     { minLat: 36.5, maxLat: 47.1, minLon: 6.6,  maxLon: 18.6 },
+  europe:    { minLat: 34.0, maxLat: 72.0, minLon: -25.0, maxLon: 45.0 },
 }
 
 function isInRegion(lat: number, lon: number, region: string): boolean {

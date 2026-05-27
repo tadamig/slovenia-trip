@@ -18,6 +18,8 @@ export type Room = {
   created_at: string
   start_city: string
   end_city: string
+  country: string
+  start_city_country: string
   start_date: string | null
   end_date: string | null
   num_people: number

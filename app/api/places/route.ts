@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+const REGION_TO_COUNTRY: Record<string, string> = {
+  slovenia: 'Slovenia', budapest: 'Hungary', croatia: 'Croatia',
+  austria: 'Austria', italy: 'Italy', czechia: 'Czech Republic', europe: 'Europe',
+}
+
 const transportLabels: Record<string, string> = {
   van: 'van/kamper', own_car: 'własny samochód', rental: 'wynajem auta', motorcycle: 'motocykl'
 }
@@ -13,7 +18,7 @@ const intensityLabels: Record<string, string> = {
 // Generuje zapytania na podstawie aktywności i regionu
 function buildQueries(activities: string[], region: string, baseCity: string): string[] {
   const queries: string[] = []
-  const country = region === 'budapest' ? 'Hungary Budapest' : region
+  const country = REGION_TO_COUNTRY[region] || region
 
   const ACTIVITY_TEMPLATES: Record<string, string[]> = {
     sup: [
@@ -139,8 +144,8 @@ export async function POST(request: NextRequest) {
     const {
       posts = [],
       activities = [],
-      region = 'slovenia',
-      baseCity = 'Ljubljana',
+      region,
+      baseCity,
       transport,
       accommodation,
       intensity,
@@ -151,9 +156,14 @@ export async function POST(request: NextRequest) {
       batch = 1,
     } = body
 
+    if (!region || !baseCity) {
+      return NextResponse.json({ places: [], postsAnalyzed: 0, error: 'Missing region or baseCity' })
+    }
     if (posts.length === 0) {
       return NextResponse.json({ places: [], postsAnalyzed: 0 })
     }
+
+    const country = REGION_TO_COUNTRY[region] || region
 
     // Grupuj posty wg tytułów żeby wykryć powtarzające się miejsca
     // (to robi DeepSeek — my przekazujemy mu więcej kontekstu)
@@ -173,10 +183,10 @@ PROFIL EKIPY:
 - Aktywności: ${activities.join(', ') || 'ogólne zwiedzanie'}
 - Czas trwania: ${daysInfo}
 - Baza noclegowa: ${baseCity}
-- Region: ${region === 'budapest' ? 'Budapeszt, Węgry' : `Słowenia i okolice (max 100km od ${baseCity})`}
+- Region: ${country}, okolice ${baseCity} (max 100km)
 
 WAŻNE ZASADY:
-- Szukaj miejsc w promieniu ~100km od ${baseCity} ORAZ w całym regionie ${region === 'budapest' ? 'Węgier' : 'Słowenii'}
+- Szukaj miejsc w promieniu ~100km od ${baseCity} ORAZ w całym regionie ${country}
 - Priorytet dla miejsc które pojawiają się w WIELU postach
 - Preferuj autentyczne, lokalne miejsca nad turystycznymi top-10
 - Każde miejsce MUSI mieć dokładne współrzędne GPS
@@ -193,9 +203,9 @@ Zwróć JSON (dokładnie 10 miejsc):
       "description": "2-3 zdania dlaczego warto i co to jest",
       "whyThisGroup": "1 zdanie dlaczego pasuje tej konkretnej ekipie",
       "tags": ["sup", "food"],
-      "region": "slovenia",
+      "region": "${region}",
       "subregion": "Bled",
-      "country": "Slovenia",
+      "country": "${country}",
       "lat": 46.3683,
       "lon": 14.1146,
       "distanceFromBase": 45,
@@ -217,7 +227,7 @@ Zwróć JSON (dokładnie 10 miejsc):
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        max_tokens: 3000,
+        max_tokens: 4000,
         messages: [
           { role: 'system', content: 'Jesteś ekspertem od podróży. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po.' },
           { role: 'user', content: prompt },

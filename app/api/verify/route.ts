@@ -67,7 +67,11 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
   }
 
   try {
-    const country = place.region === 'budapest' ? 'Hungary' : 'Slovenia'
+    const REGION_TO_COUNTRY: Record<string, string> = {
+      slovenia: 'Slovenia', budapest: 'Hungary', croatia: 'Croatia',
+      austria: 'Austria', italy: 'Italy', czechia: 'Czech Republic', europe: '',
+    }
+    const country = place.country || REGION_TO_COUNTRY[place.region] || place.region
     // Użyj subregion jeśli dostępny dla bardziej precyzyjnego szukania
     const location = place.subregion || country
     const query = `${place.name} ${location}`

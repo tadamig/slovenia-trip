@@ -9,8 +9,8 @@ interface Props {
 }
 
 const STEPS = [
-  { dot: '#6366f1', text: 'Łączenie z Reddit...' },
-  { dot: '#4ade80', text: 'Pobieranie postów z r/Slovenia, r/travel...' },
+  { dot: '#6366f1', text: 'Generuję zapytania do Reddit...' },
+  { dot: '#4ade80', text: 'Pobieram posty z r/Slovenia, r/travel...' },
   { dot: '#22d3ee', text: 'DeepSeek analizuje treść postów...' },
   { dot: '#fbbf24', text: 'Dopasowuję do preferencji ekipy...' },
   { dot: '#f472b6', text: 'Generuję rekomendacje...', pulse: true },
@@ -24,50 +24,64 @@ const PINS = [
 ]
 
 const SEG_MS = 2200
-const GAP_MS = 600
+const PIN_DELAY = 400
+const GRADS = ['url(#ag1)', 'url(#ag2)', 'url(#ag3)', 'url(#ag4)']
+const PATHS = [
+  "M 24,128 C 55,128 65,98 96,82",
+  "M 96,82 C 127,66 138,86 168,66",
+  "M 168,66 C 198,46 208,56 238,40",
+  "M 238,40 C 262,27 272,34 292,24",
+]
+const BAR_TARGETS = [18, 42, 63, 81, 93]
 
-export default function GlobeAnimation({ phase, postsScanned }: Props) {
-  const [segKeys, setSegKeys] = useState<{ i: number; startedAt: number }[]>([])
+export default function GlobeAnimation({ postsScanned }: Props) {
+  const [segKeys, setSegKeys] = useState<{ i: number }[]>([])
   const [visiblePins, setVisiblePins] = useState<number[]>([])
   const [visibleSteps, setVisibleSteps] = useState<number[]>([])
   const [barWidth, setBarWidth] = useState(0)
 
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = []
+    let cancelled = false
 
-    timers.push(setTimeout(() => setVisibleSteps(p => [...p, 0]), 100))
+    async function sleep(ms: number) {
+      return new Promise<void>(r => setTimeout(r, ms))
+    }
 
-    PINS.forEach((_, i) => {
-      const segStart = 400 + i * (SEG_MS + GAP_MS)
-      const pinStart = segStart + SEG_MS + 150
-      const stepStart = segStart + 300
-      const barTargets = [18, 42, 63, 81, 93]
+    async function runLoop() {
+      while (!cancelled) {
+        // Reset
+        setSegKeys([])
+        setVisiblePins([])
+        setVisibleSteps([])
+        setBarWidth(0)
+        await sleep(300)
+        if (cancelled) break
 
-      timers.push(setTimeout(() => {
-        setSegKeys(p => [...p, { i, startedAt: Date.now() }])
-      }, segStart))
+        setVisibleSteps([0])
 
-      timers.push(setTimeout(() => setVisiblePins(p => [...p, i]), pinStart))
-      timers.push(setTimeout(() => setVisibleSteps(p => [...p, i + 1]), stepStart))
-      timers.push(setTimeout(() => setBarWidth(barTargets[i] || 0), segStart + 400))
-    })
+        for (let i = 0; i < PINS.length; i++) {
+          if (cancelled) break
+          setSegKeys(p => [...p, { i }])
+          setBarWidth(BAR_TARGETS[i])
+          setVisibleSteps(p => [...p, i + 1])
+          await sleep(SEG_MS + 200)
+          if (cancelled) break
+          setVisiblePins(p => [...p, i])
+          await sleep(PIN_DELAY)
+        }
 
-    const lastStep = 400 + PINS.length * (SEG_MS + GAP_MS) + 400
-    timers.push(setTimeout(() => {
-      setVisibleSteps(p => [...p, PINS.length])
-      setBarWidth(93)
-    }, lastStep))
+        if (cancelled) break
+        setVisibleSteps(p => [...p, PINS.length])
+        setBarWidth(93)
 
-    return () => timers.forEach(clearTimeout)
+        // Pauza na końcu przed resetem
+        await sleep(3500)
+      }
+    }
+
+    runLoop()
+    return () => { cancelled = true }
   }, [])
-
-  const GRADS = ['url(#ag1)', 'url(#ag2)', 'url(#ag3)', 'url(#ag4)']
-  const PATHS = [
-    "M 24,128 C 55,128 65,98 96,82",
-    "M 96,82 C 127,66 138,86 168,66",
-    "M 168,66 C 198,46 208,56 238,40",
-    "M 238,40 C 262,27 272,34 292,24",
-  ]
 
   return (
     <div className="flex flex-col items-center py-4 px-4">
@@ -89,18 +103,10 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
           </defs>
 
           {segKeys.map(({ i }) => (
-            <path
-              key={`seg-${i}`}
-              d={PATHS[i]}
-              fill="none"
-              stroke={GRADS[i]}
-              strokeWidth="2.5"
-              strokeDasharray="155"
-              strokeDashoffset="155"
+            <path key={`seg-${i}`} d={PATHS[i]} fill="none" stroke={GRADS[i]}
+              strokeWidth="2.5" strokeDasharray="155" strokeDashoffset="155"
               strokeLinecap="round"
-              style={{
-                animation: `globeDraw ${SEG_MS}ms cubic-bezier(.4,0,.2,1) forwards`,
-              }}
+              style={{ animation: `globeDraw ${SEG_MS}ms cubic-bezier(.4,0,.2,1) forwards` }}
             />
           ))}
 
@@ -136,21 +142,15 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
           )}
         </div>
 
-        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3" style={{ position: 'relative' }}>
-          <div
-            className="h-full rounded-full"
-            style={{
-              width: `${barWidth}%`,
-              background: 'linear-gradient(90deg,#6366f1,#3d7f41,#0891b2,#f59e0b,#ec4899)',
-              transition: 'width 1.5s cubic-bezier(.4,0,.2,1)',
-              position: 'relative',
-              overflow: 'hidden',
-            }}
-          >
+        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3">
+          <div className="h-full rounded-full" style={{
+            width: `${barWidth}%`,
+            background: 'linear-gradient(90deg,#6366f1,#3d7f41,#0891b2,#f59e0b,#ec4899)',
+            transition: 'width 1.5s cubic-bezier(.4,0,.2,1)',
+            position: 'relative', overflow: 'hidden',
+          }}>
             <div style={{
-              position: 'absolute',
-              top: 0, bottom: 0,
-              width: 60,
+              position: 'absolute', top: 0, bottom: 0, width: 60,
               background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent)',
               animation: 'globeShimmer 1.6s ease-in-out infinite',
             }} />
@@ -159,19 +159,15 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
 
         <div className="flex flex-col gap-1">
           {STEPS.map((step, i) => (
-            <div key={i} className="flex items-center gap-2"
-              style={{
-                opacity: visibleSteps.includes(i) ? 1 : 0,
-                transform: visibleSteps.includes(i) ? 'translateX(0)' : 'translateX(-6px)',
-                transition: 'opacity .35s ease, transform .35s ease',
-              }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{
-                  background: step.dot,
-                  animation: step.pulse && visibleSteps.includes(STEPS.length - 1) ? 'globeDotPulse .9s ease infinite' : 'none',
-                }}
-              />
+            <div key={i} className="flex items-center gap-2" style={{
+              opacity: visibleSteps.includes(i) ? 1 : 0,
+              transform: visibleSteps.includes(i) ? 'translateX(0)' : 'translateX(-6px)',
+              transition: 'opacity .35s ease, transform .35s ease',
+            }}>
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{
+                background: step.dot,
+                animation: step.pulse && visibleSteps.includes(STEPS.length - 1) ? 'globeDotPulse .9s ease infinite' : 'none',
+              }} />
               <span className="text-xs" style={{
                 color: step.pulse && visibleSteps.includes(STEPS.length - 1) ? step.dot : '#57534e'
               }}>
@@ -183,22 +179,10 @@ export default function GlobeAnimation({ phase, postsScanned }: Props) {
       </div>
 
       <style>{`
-        @keyframes globeDraw {
-          from { stroke-dashoffset: 155; }
-          to   { stroke-dashoffset: 0; }
-        }
-        @keyframes globePinIn {
-          0%   { opacity:0; transform:scale(.6) translateY(6px); }
-          100% { opacity:1; transform:scale(1) translateY(0); }
-        }
-        @keyframes globeShimmer {
-          0%   { left: -60px; }
-          100% { left: 110%; }
-        }
-        @keyframes globeDotPulse {
-          0%,100% { transform:scale(1); opacity:1; }
-          50%     { transform:scale(1.4); opacity:.6; }
-        }
+        @keyframes globeDraw { from{stroke-dashoffset:155} to{stroke-dashoffset:0} }
+        @keyframes globePinIn { 0%{opacity:0;transform:scale(.6) translateY(6px)} 100%{opacity:1;transform:scale(1) translateY(0)} }
+        @keyframes globeShimmer { 0%{left:-60px} 100%{left:110%} }
+        @keyframes globeDotPulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.4);opacity:.6} }
       `}</style>
     </div>
   )

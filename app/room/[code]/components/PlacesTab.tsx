@@ -80,7 +80,7 @@ import { useState, useEffect } from 'react'
 import GlobeAnimation from './GlobeAnimation'
 import { supabase, SavedPlace, Room, UserPreference } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
-import { Heart, MessageSquare, Star, MapPin, ExternalLink, ChevronDown, Filter, RefreshCw } from 'lucide-react'
+import { Heart, MessageSquare, Star, MapPin, ExternalLink, ChevronDown, Filter, RefreshCw, Loader2 } from 'lucide-react'
 
 interface Props {
   room: Room
@@ -104,6 +104,11 @@ interface AIPlace {
   localityScore?: number
   authenticityNote?: string
   country?: string
+  verified?: boolean
+  googleRating?: number
+  googleTotalRatings?: number
+  isOpen?: boolean | null
+  googleAddress?: string
   sources: { title: string; url: string; score: number; subreddit: string }[]
 }
 
@@ -320,10 +325,14 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
       {/* Szczegóły — rozwijana sekcja */}
       <button
         onClick={() => setShowDetails(!showDetails)}
-        className="flex items-center gap-1.5 text-stone-600 hover:text-stone-400 text-xs transition-colors"
+        className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl border transition-all ${
+          showDetails
+            ? 'bg-water-900/30 border-water-700/40 text-water-400'
+            : 'bg-stone-800/60 border-stone-700/40 text-water-500 hover:border-water-600/40 hover:text-water-400'
+        }`}
       >
         <ChevronDown className={`w-3 h-3 transition-transform ${showDetails ? 'rotate-180' : ''}`} />
-        {showDetails ? 'Ukryj szczegóły' : 'Szczegóły'}
+        {showDetails ? 'Ukryj szczegóły' : '🔍 Szczegóły miejsca'}
       </button>
 
       {showDetails && (
@@ -360,6 +369,18 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
             <div className="flex items-center justify-between">
               <span className="text-stone-500">🌍 Kraj</span>
               <span className="text-stone-300">{place.country}</span>
+            </div>
+          )}
+          {place.googleAddress && (
+            <div>
+              <span className="text-stone-500">📬 Adres: </span>
+              <span className="text-stone-400">{place.googleAddress}</span>
+            </div>
+          )}
+          {place.googleTotalRatings && (
+            <div className="flex items-center justify-between">
+              <span className="text-stone-500">⭐ Google</span>
+              <span className="text-stone-300">{place.googleRating}/5 ({place.googleTotalRatings} opinii)</span>
             </div>
           )}
         </div>
@@ -457,6 +478,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
   const [showAll, setShowAll] = useState(false)
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const sessionId = getSessionId()
 
@@ -504,6 +526,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   }
 
   async function handleSearchMore() {
+    setLoadingMore(true)
     // Szuka kolejnej partii i dodaje do istniejących
     const region = activeRegion === 'all' ? 'slovenia' : activeRegion
     let posts: any[] = []
@@ -546,6 +569,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         await saveRecommendations(updated, posts.length)
       }
     } catch {}
+    setLoadingMore(false)
   }
 
   async function handleSearch() {
@@ -602,7 +626,38 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       // Fade out animacji
       setFadingOut(true)
       await new Promise(r => setTimeout(r, 500))
-      const firstBatch = data1.places || []
+      // Weryfikacja przez Google Places
+      let firstBatch = data1.places || []
+      try {
+        const verifyRes = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ places: firstBatch.map((p: AIPlace) => ({ name: p.name, region: p.region, country: p.country })) }),
+        })
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json()
+          firstBatch = firstBatch
+            .filter((p: AIPlace) => {
+              const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
+              return !v || v.verified // Zostaw jeśli zweryfikowane lub brak odpowiedzi
+            })
+            .map((p: AIPlace) => {
+              const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
+              if (!v?.verified) return p
+              return {
+                ...p,
+                verified: true,
+                lat: v.lat || p.lat,
+                lon: v.lon || p.lon,
+                googleRating: v.rating,
+                googleTotalRatings: v.totalRatings,
+                isOpen: v.isOpen,
+                googleAddress: v.address,
+              }
+            })
+        }
+      } catch {}
+
       setAiPlaces(firstBatch)
       setLoading(false)
       setFadingOut(false)
@@ -715,9 +770,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
             {aiPlaces.length > 0 ? 'Odśwież' : 'Szukaj dla ekipy'}
           </button>
           {aiPlaces.length > 0 && (
-            <button onClick={handleSearchMore}
-              className="flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-300 rounded-2xl px-4 font-semibold text-sm transition-all active:scale-95">
-              + Więcej
+            <button onClick={handleSearchMore} disabled={loadingMore}
+              className="flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 disabled:opacity-60 border border-stone-700 text-stone-300 rounded-2xl px-4 font-semibold text-sm transition-all active:scale-95">
+              {loadingMore ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Szukam...</>
+              ) : '+ Więcej'}
             </button>
           )}
         </div>

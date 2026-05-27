@@ -1,73 +1,79 @@
 'use client'
 
 
-const ACTIVITY_QUERIES: Record<string, string[]> = {
-  sup: ['Slovenia SUP paddleboard lake', 'Bled Bohinj kayak paddle', 'Soča river kayak'],
-  trekking: ['Slovenia hiking trail', 'Julian Alps trekking', 'Slovenia waterfall hike'],
-  food: ['Slovenia local restaurant', 'Ljubljana food must try', 'Slovenia traditional cuisine'],
-  sunset: ['Slovenia viewpoint sunset', 'Bled viewpoint photography'],
-  sightseeing: ['Slovenia hidden gem tourist', 'Ljubljana worth visiting'],
-  nightlife: ['Ljubljana nightlife bar', 'Ljubljana craft beer'],
-  markets: ['Ljubljana market local', 'Slovenia farmers market'],
-  photo: ['Slovenia photography spot', 'Bled photography best'],
-  relax: ['Slovenia thermal spa', 'Slovenia peaceful lake swim'],
-  cycling: ['Slovenia cycling route', 'Ljubljana bike path'],
-}
-
-const BUDAPEST_QUERIES: Record<string, string[]> = {
-  food: ['Budapest local food restaurant', 'Budapest must eat'],
-  sightseeing: ['Budapest hidden gem', 'Budapest underrated'],
-  nightlife: ['Budapest ruin bar', 'Budapest nightlife'],
-  relax: ['Budapest thermal bath', 'Budapest spa'],
-  markets: ['Budapest market local', 'Budapest great market'],
-  sup: ['Budapest Danube kayak'],
-  photo: ['Budapest photography spot'],
-  sunset: ['Budapest sunset viewpoint'],
-}
-
-async function fetchRedditFromBrowser(activities: string[], region: string): Promise<any[]> {
-  const queryMap = region === 'budapest' ? BUDAPEST_QUERIES : ACTIVITY_QUERIES
+function buildClientQueries(activities: string[], region: string, baseCity: string): string[] {
+  const country = region === 'budapest' ? 'Hungary Budapest' : region
   const queries: string[] = []
-  
-  for (const act of activities) {
-    const q = queryMap[act] || []
-    queries.push(...q.slice(0, 1))
-  }
-  queries.push(region === 'budapest' ? 'Budapest travel tips' : 'Slovenia travel tips')
 
+  const TEMPLATES: Record<string, string[]> = {
+    sup: [`${country} SUP paddleboard lake`, `${country} kayak river hidden`, `${baseCity} water swimming spot`, `${country} best lake swim reddit`],
+    trekking: [`${country} hiking trail recommend`, `${country} best hike hidden gem`, `${baseCity} hiking day trip`, `${country} waterfall trail`],
+    food: [`${country} local restaurant must try`, `${baseCity} best food local eat`, `${country} hidden restaurant authentic`, `${country} traditional food reddit`],
+    sunset: [`${country} best viewpoint sunset`, `${baseCity} panorama view`, `${country} photography landscape spot`],
+    sightseeing: [`${country} hidden gem tourist`, `${baseCity} worth visiting`, `${country} underrated off beaten path`],
+    nightlife: [`${baseCity} bar nightlife recommend`, `${country} craft beer local bar`],
+    markets: [`${baseCity} local market farmers`, `${country} market souvenir local`],
+    photo: [`${country} photography spot`, `${baseCity} instagram location`],
+    relax: [`${country} thermal spa bath`, `${country} peaceful relax nature`],
+    cycling: [`${country} cycling route bike trail`, `${baseCity} bike path`],
+  }
+
+  for (const act of activities) {
+    queries.push(...(TEMPLATES[act] || []))
+  }
+
+  queries.push(
+    `${country} travel tips hidden gem`,
+    `${baseCity} what to do visit`,
+    `${country} recommend reddit`,
+    `visit ${country} advice`,
+  )
+
+  return Array.from(new Set(queries)).slice(0, 20)
+}
+
+async function fetchRedditFromBrowser(activities: string[], region: string, baseCity: string): Promise<any[]> {
+  const queries = buildClientQueries(activities, region, baseCity)
   const allPosts: any[] = []
   const seenUrls = new Set<string>()
 
-  for (const query of queries.slice(0, 6)) {
-    try {
-      const res = await fetch(
-        `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&limit=8&t=year`,
-        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TripPlanner/1.0)' } }
-      )
-      if (!res.ok) continue
-      const data = await res.json()
-      const posts = (data.data?.children || [])
-        .filter((c: any) => c.data.score >= 5)
-        .map((c: any) => ({
-          title: c.data.title,
-          score: c.data.score,
-          url: `https://reddit.com${c.data.permalink}`,
-          subreddit: c.data.subreddit,
-          text: (c.data.selftext || '').slice(0, 400),
-        }))
-      
-      for (const p of posts) {
-        if (!seenUrls.has(p.url)) {
-          seenUrls.add(p.url)
-          allPosts.push(p)
+  // Pobierz równolegle po 4 zapytania naraz
+  for (let i = 0; i < queries.length; i += 4) {
+    const batch = queries.slice(i, i + 4)
+    const results = await Promise.allSettled(
+      batch.map(async (query) => {
+        const res = await fetch(
+          `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&limit=10&t=year`,
+          { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }
+        )
+        if (!res.ok) return []
+        const data = await res.json()
+        return (data.data?.children || [])
+          .filter((c: any) => c.data.score >= 3)
+          .map((c: any) => ({
+            title: c.data.title,
+            score: c.data.score,
+            url: `https://reddit.com${c.data.permalink}`,
+            subreddit: c.data.subreddit,
+            text: (c.data.selftext || '').slice(0, 400),
+            numComments: c.data.num_comments || 0,
+          }))
+      })
+    )
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        for (const p of result.value) {
+          if (!seenUrls.has(p.url)) {
+            seenUrls.add(p.url)
+            allPosts.push(p)
+          }
         }
       }
-    } catch {
-      // Jeśli Reddit blokuje - kontynuuj bez niego
     }
   }
 
-  return allPosts.slice(0, 25)
+  return allPosts.slice(0, 50)
 }
 
 import { useState, useEffect } from 'react'
@@ -94,6 +100,10 @@ interface AIPlace {
   estimatedCost: 'free' | 'cheap' | 'moderate' | 'expensive'
   sourceCount: number
   sentiment: string
+  distanceFromBase?: number
+  localityScore?: number
+  authenticityNote?: string
+  country?: string
   sources: { title: string; url: string; score: number; subreddit: string }[]
 }
 
@@ -239,6 +249,7 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
   const [showNotes, setShowNotes] = useState(false)
   const [noteText, setNoteText] = useState('')
   const [showSources, setShowSources] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
   const matches = place.tags.filter(t => groupActivities.includes(t))
   const isMatch = matches.length > 0
 
@@ -305,6 +316,54 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
           </span>
         )}
       </div>
+
+      {/* Szczegóły — rozwijana sekcja */}
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        className="flex items-center gap-1.5 text-stone-600 hover:text-stone-400 text-xs transition-colors"
+      >
+        <ChevronDown className={`w-3 h-3 transition-transform ${showDetails ? 'rotate-180' : ''}`} />
+        {showDetails ? 'Ukryj szczegóły' : 'Szczegóły'}
+      </button>
+
+      {showDetails && (
+        <div className="bg-stone-900/60 border border-stone-800/60 rounded-xl p-3 space-y-2 text-xs">
+          {place.distanceFromBase && (
+            <div className="flex items-center justify-between">
+              <span className="text-stone-500">📍 Odległość od bazy</span>
+              <span className="text-stone-300 font-medium">{place.distanceFromBase} km</span>
+            </div>
+          )}
+          {place.localityScore && (
+            <div className="flex items-center justify-between">
+              <span className="text-stone-500">🏡 Lokalność</span>
+              <div className="flex items-center gap-1">
+                {Array.from({length: 10}).map((_, i) => (
+                  <div key={i} className="w-1.5 h-1.5 rounded-full" style={{background: i < (place.localityScore || 0) ? '#4ade80' : '#292524'}} />
+                ))}
+              </div>
+            </div>
+          )}
+          {place.authenticityNote && (
+            <div>
+              <span className="text-stone-500">✨ Autentyczność: </span>
+              <span className="text-stone-400">{place.authenticityNote}</span>
+            </div>
+          )}
+          {place.estimatedCost && (
+            <div className="flex items-center justify-between">
+              <span className="text-stone-500">💰 Koszt</span>
+              <span className="text-stone-300">{COST_LABEL[place.estimatedCost] || place.estimatedCost}</span>
+            </div>
+          )}
+          {place.country && (
+            <div className="flex items-center justify-between">
+              <span className="text-stone-500">🌍 Kraj</span>
+              <span className="text-stone-300">{place.country}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sources + sentiment + maps */}
       <div className="flex items-center justify-between">
@@ -448,7 +507,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     // Szuka kolejnej partii i dodaje do istniejących
     const region = activeRegion === 'all' ? 'slovenia' : activeRegion
     let posts: any[] = []
-    try { posts = await fetchRedditFromBrowser(groupActivities, region) } catch {}
+    try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana') } catch {}
 
     const tripDays = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
@@ -505,7 +564,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     // Pobierz posty z Reddit z przeglądarki
     let posts: any[] = []
     try {
-      posts = await fetchRedditFromBrowser(groupActivities, region)
+      posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana')
       setPostsScanned(posts.length)
     } catch {}
 

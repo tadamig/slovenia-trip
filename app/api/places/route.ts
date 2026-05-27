@@ -189,6 +189,7 @@ WAŻNE ZASADY:
 - Szukaj miejsc w promieniu ~100km od ${baseCity} ORAZ w całym regionie ${country}
 - Priorytet dla miejsc które pojawiają się w WIELU postach
 - Preferuj autentyczne, lokalne miejsca nad turystycznymi top-10
+- Pole "region" ZAWSZE ustaw na: "${region}" (nie zmieniaj tej wartości)
 - Każde miejsce MUSI mieć dokładne współrzędne GPS
 - Oszacuj odległość od ${baseCity} w km
 
@@ -204,7 +205,7 @@ Zwróć JSON (dokładnie 10 miejsc):
       "whyThisGroup": "1 zdanie dlaczego pasuje tej konkretnej ekipie",
       "tags": ["sup", "food"],
       "region": "${region}",
-      "subregion": "Bled",
+      "subregion": "Como",
       "country": "${country}",
       "lat": 46.3683,
       "lon": 14.1146,
@@ -229,7 +230,7 @@ Zwróć JSON (dokładnie 10 miejsc):
         model: 'deepseek-chat',
         max_tokens: 4000,
         messages: [
-          { role: 'system', content: 'Jesteś ekspertem od podróży. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po.' },
+          { role: 'system', content: 'Jesteś ekspertem od podróży. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po. Wszystkie opisy, nazwy pól tekstowych i komentarze ZAWSZE po polsku.' },
           { role: 'user', content: prompt },
         ],
       }),

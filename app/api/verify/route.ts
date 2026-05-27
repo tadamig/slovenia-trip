@@ -12,7 +12,7 @@ const REGION_BOUNDS: Record<string, { minLat: number; maxLat: number; minLon: nu
 }
 
 function isInRegion(lat: number, lon: number, region: string): boolean {
-  const bounds = REGION_BOUNDS[region] || REGION_BOUNDS.slovenia
+  const bounds = REGION_BOUNDS[region.toLowerCase()] || REGION_BOUNDS.europe
   return lat >= bounds.minLat && lat <= bounds.maxLat && lon >= bounds.minLon && lon <= bounds.maxLon
 }
 
@@ -29,9 +29,9 @@ function nameSimilarity(a: string, b: string): number {
   if (na === nb) return 1.0
   if (na.includes(nb) || nb.includes(na)) return 0.9
 
-  // Wspólne słowa
-  const wordsA = na.split(' ').filter(w => w.length > 2)
-  const wordsB = nb.split(' ').filter(w => w.length > 2)
+  // Wspólne słowa — uwzględnij też słowa krótkie (min 2 litery)
+  const wordsA = na.split(' ').filter(w => w.length > 1)
+  const wordsB = nb.split(' ').filter(w => w.length > 1)
   if (wordsA.length === 0 || wordsB.length === 0) return 0
 
   const common = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)))
@@ -72,6 +72,12 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
       austria: 'Austria', italy: 'Italy', czechia: 'Czech Republic', europe: '',
     }
     const country = place.country || REGION_TO_COUNTRY[place.region] || place.region
+    // Wyznacz region z kraju (nie z place.region który może być np. "Lombardy")
+    const COUNTRY_TO_REGION: Record<string, string> = {
+      'slovenia': 'slovenia', 'hungary': 'budapest', 'croatia': 'croatia',
+      'austria': 'austria', 'italy': 'italy', 'czech republic': 'czechia',
+    }
+    const detectedRegion = COUNTRY_TO_REGION[country.toLowerCase()] || 'europe'
     // Użyj subregion jeśli dostępny dla bardziej precyzyjnego szukania
     const location = place.subregion || country
     const query = `${place.name} ${location}`
@@ -101,7 +107,7 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
       const lon = candidate.geometry?.location?.lng
 
       if (!lat || !lon) continue
-      if (!isInRegion(lat, lon, place.region)) continue
+      if (!isInRegion(lat, lon, detectedRegion)) continue
 
       const similarity = nameSimilarity(place.name, candidate.name)
       if (similarity > bestSimilarity) {
@@ -115,13 +121,13 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
       const debugCandidates = candidates.slice(0, 2).map((c: any) => {
         const clat = c.geometry?.location?.lat
         const clon = c.geometry?.location?.lng
-        const inR = clat && clon ? isInRegion(clat, clon, place.region) : 'nocoords'
+        const inR = clat && clon ? isInRegion(clat, clon, detectedRegion) : 'nocoords'
         return `${c.name}(${clat?.toFixed(1)},${clon?.toFixed(1)},inRegion:${inR})`
       }).join('|')
       return {
         name: place.name,
         verified: false,
-        reason: `low_sim_${bestSimilarity.toFixed(2)}_region:${place.region}_candidates:${debugCandidates}`,
+        reason: `low_sim_${bestSimilarity.toFixed(2)}_region:${detectedRegion}_country:${country}_candidates:${debugCandidates}`,
       }
     }
 

@@ -569,7 +569,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     let posts: any[] = []
     try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, myPrefs.transport, myPrefs.accommodation, myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4, []) } catch {}
 
-    const tripDays2 = room.start_date && room.end_date
+    const tripDaysMore = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
 
@@ -583,7 +583,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       numPeople: room.num_people || 4,
       startDate: room.start_date,
       endDate: room.end_date,
-      tripDays: tripDays2,
+      tripDays: tripDaysMore,
       batch: 2,
     }
 
@@ -646,20 +646,56 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setPostsScanned(0)
     setSearchCount(c => c + 1)
 
-    const region = activeRegion === 'all' ? 'slovenia' : activeRegion
+    const region = countryToRegion(room.country || 'Slovenia')
+    const tripDaysCalc = room.start_date && room.end_date
+      ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
+      : null
+    const monthCalc = room.start_date ? new Date(room.start_date).getMonth() + 1 : null
 
-    // Pobierz posty z Reddit
-    let posts: any[] = []
+    // Krok 1: DeepSeek generuje zapytania Reddit
+    setScanPhase(0)
+    let generatedQueries: string[] = []
+    let generatedSubreddits: string[] = []
     try {
-      posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, '', '', '', 'any', [], 4, [])
-      setPostsScanned(posts.length)
+      const qRes = await fetch('/api/generate-queries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activities: groupActivities,
+          baseCity: room.end_city || 'Ljubljana',
+          region,
+          transport: myPrefs.transport,
+          accommodation: myPrefs.accommodation,
+          intensity: myPrefs.intensity,
+          numPeople: room.num_people || 4,
+          budget: myPrefs.budget || 'any',
+          food: myPrefs.food || [],
+          tripDays: tripDaysCalc,
+          month: monthCalc,
+        }),
+      })
+      if (qRes.ok) {
+        const qData = await qRes.json()
+        generatedQueries = qData.queries || []
+        generatedSubreddits = qData.subreddits || []
+      }
     } catch {}
 
     setScanPhase(1)
 
-    const tripDays2 = room.start_date && room.end_date
-      ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
-      : null
+    // Krok 2: Przeglądarka pobiera posty z Reddit
+    let posts: any[] = []
+    try {
+      posts = await fetchRedditFromBrowser(
+        groupActivities, region, room.end_city || 'Ljubljana',
+        tripDaysCalc, monthCalc,
+        myPrefs.transport, myPrefs.accommodation, myPrefs.intensity,
+        myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4,
+        generatedQueries, generatedSubreddits
+      )
+      setPostsScanned(posts.length)
+    } catch {}
+
 
     const payload = {
       posts,
@@ -672,7 +708,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       numPeople: room.num_people || 4,
       startDate: room.start_date,
       endDate: room.end_date,
-      tripDays: tripDays2,
+      tripDays: tripDaysCalc,
     }
 
     try {

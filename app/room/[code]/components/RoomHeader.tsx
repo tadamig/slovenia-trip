@@ -26,9 +26,9 @@ export default function RoomHeader({ room, memberCount }: Props) {
           <h1 className="font-display text-base font-semibold text-stone-100 leading-tight">
             {room.trip_name}
           </h1>
-          {room.start_city && (
+          {(room.start_city || room.end_city) && (
             <p className="text-stone-500 text-xs mt-0.5">
-              {room.start_city} → Budapeszt → {room.end_city}
+              {[room.start_city, room.end_city].filter(Boolean).join(' → ')}
             </p>
           )}
         </div>

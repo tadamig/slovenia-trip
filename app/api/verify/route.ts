@@ -112,10 +112,16 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
 
     // Wymaga >70% podobieństwa nazwy
     if (!bestMatch || bestSimilarity < 0.7) {
+      const debugCandidates = candidates.slice(0, 2).map((c: any) => {
+        const clat = c.geometry?.location?.lat
+        const clon = c.geometry?.location?.lng
+        const inR = clat && clon ? isInRegion(clat, clon, place.region) : 'nocoords'
+        return `${c.name}(${clat?.toFixed(1)},${clon?.toFixed(1)},inRegion:${inR})`
+      }).join('|')
       return {
         name: place.name,
         verified: false,
-        reason: `low_similarity_${bestSimilarity.toFixed(2)}_best:${bestMatch?.name || 'none'}`,
+        reason: `low_sim_${bestSimilarity.toFixed(2)}_region:${place.region}_candidates:${debugCandidates}`,
       }
     }
 

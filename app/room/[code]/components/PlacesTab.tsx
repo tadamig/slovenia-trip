@@ -261,6 +261,14 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
                 ✓ pasuje do ekipy
               </span>
             )}
+            {place.verified && (
+              <span className="text-xs text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded-full border border-emerald-700/30 flex items-center gap-1">
+                ✅ Google
+                {place.googleRating && <span className="font-semibold">⭐ {place.googleRating}</span>}
+                {place.isOpen === true && <span className="text-green-300">· Otwarte</span>}
+                {place.isOpen === false && <span className="text-red-300">· Zamknięte</span>}
+              </span>
+            )}
           </div>
           <h3 className="font-display text-base font-semibold text-stone-100">{place.name}</h3>
         </div>

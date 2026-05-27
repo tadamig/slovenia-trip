@@ -846,17 +846,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         </div>
       )}
 
-      {/* Region filter */}
-      <div className="flex gap-2">
-        {[{ id: 'all', label: '🗺️ Wszystkie' }, { id: 'budapest', label: '🇭🇺 Budapeszt' }, { id: 'slovenia', label: '🇸🇮 Słowenia' }].map(r => (
-          <button key={r.id} onClick={() => setActiveRegion(r.id as any)}
-            className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
-              activeRegion === r.id ? 'bg-stone-700 text-stone-100 border border-stone-600' : 'bg-stone-800/40 text-stone-500 border border-stone-700/40'
-            }`}>
-            {r.label}
-          </button>
-        ))}
-      </div>
+
 
       {/* Przyciski */}
       {!loading && (

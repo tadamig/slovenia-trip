@@ -289,7 +289,7 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
                 ? 'bg-sand-800/40 text-sand-400 border border-sand-700/30'
                 : 'bg-forest-800/40 text-forest-400 border border-forest-700/30'
             }`}>
-              {place.region === 'budapest' ? '🇭🇺' : '🇸🇮'} {place.subregion || (place.region === 'budapest' ? 'Budapeszt' : 'Słowenia')}
+              📍 {place.subregion || place.country || 'Brak lokalizacji'}
             </span>
             {isMatch && (
               <span className="text-xs text-forest-500 bg-forest-800/20 px-2 py-0.5 rounded-full border border-forest-700/20">
@@ -551,7 +551,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     await supabase.from('ai_recommendations').delete().eq('room_id', room.id)
     await supabase.from('ai_recommendations').insert({
       room_id: room.id,
-      region: activeRegion,
+      region: countryToRegion(room.country || 'Slovenia'),
       places,
       posts_analyzed: analyzed,
     })
@@ -565,9 +565,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   async function handleSearchMore() {
     setLoadingMore(true)
     // Szuka kolejnej partii i dodaje do istniejących
-    const region = activeRegion === 'all'
-      ? countryToRegion(room.country || 'Slovenia')
-      : activeRegion
+    const region = countryToRegion(room.country || 'Slovenia')
     let posts: any[] = []
     try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, myPrefs.transport, myPrefs.accommodation, myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4, []) } catch {}
 

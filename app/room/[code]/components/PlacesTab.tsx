@@ -665,10 +665,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       // Weryfikacja batch 1 + kolejne batche — wszystko w tle
       let allPlaces = [...firstBatch]
 
-      // Weryfikuj batch 1 w tle i aktualizuj badge'i
-      verifyAndMerge(firstBatch, region).then(verified => {
+      // Weryfikuj batch 1 w tle i aktualizuj badge'i + zapisz
+      verifyAndMerge(firstBatch, region).then(async verified => {
         allPlaces = verified
         setAiPlaces(verified)
+        await saveRecommendations(verified, posts.length)
       })
 
       // Batch 2, 3, 4 — w tle, dodawaj sukcesywnie
@@ -692,17 +693,24 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
             setAiPlaces(prev => [...prev, place])
           }
 
-          // Weryfikuj nowe w tle
-          verifyAndMerge(newPlaces, region).then(verified => {
-            setAiPlaces(prev => prev.map(p => {
-              const v = verified.find(vp => vp.name === p.name)
-              return v || p
-            }))
+          // Weryfikuj nowe w tle i zapisuj
+          verifyAndMerge(newPlaces, region).then(async verified => {
+            // Deduplikuj z istniejącymi po placeId
+            const verifiedIds = new Set(verified.map(v => v.googlePlaceId).filter(Boolean))
+            setAiPlaces(prev => {
+              const deduped = prev.filter(p => !p.googlePlaceId || !verifiedIds.has(p.googlePlaceId) || verified.find(v => v.name === p.name))
+              const merged = deduped.map(p => {
+                const v = verified.find(vp => vp.name === p.name)
+                return v || p
+              })
+              allPlaces = merged
+              return merged
+            })
+            await saveRecommendations(allPlaces, posts.length)
           })
         } catch {}
       }
 
-      await saveRecommendations(allPlaces, posts.length)
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
       setLoading(false)

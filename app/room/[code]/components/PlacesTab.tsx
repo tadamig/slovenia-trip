@@ -90,6 +90,7 @@ interface AIPlace {
   verified?: boolean
   googleRating?: number
   googleTotalRatings?: number
+  googlePlaceId?: string
   isOpen?: boolean | null
   googleAddress?: string
   sources: { title: string; url: string; score: number; subreddit: string }[]
@@ -262,12 +263,20 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
               </span>
             )}
             {place.verified && (
-              <span className="text-xs text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded-full border border-emerald-700/30 flex items-center gap-1">
+              <a
+                href={place.googlePlaceId
+                  ? `https://www.google.com/maps/place/?q=place_id:${place.googlePlaceId}`
+                  : `https://www.google.com/maps/search/${encodeURIComponent(place.name)}`
+                }
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded-full border border-emerald-700/30 flex items-center gap-1 hover:bg-emerald-900/40 transition-colors"
+              >
                 ✅ Google
                 {place.googleRating && <span className="font-semibold">⭐ {place.googleRating}</span>}
                 {place.isOpen === true && <span className="text-green-300">· Otwarte</span>}
                 {place.isOpen === false && <span className="text-red-300">· Zamknięte</span>}
-              </span>
+              </a>
             )}
           </div>
           <h3 className="font-display text-base font-semibold text-stone-100">{place.name}</h3>
@@ -388,15 +397,17 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
           <ChevronDown className={`w-3 h-3 transition-transform ${showSources ? 'rotate-180' : ''}`} />
         </button>
         <a
-          href={place.lat && place.lon
-            ? `https://maps.google.com/?q=${place.lat},${place.lon}`
-            : `https://maps.google.com/search/${encodeURIComponent(place.name + ' ' + (place.country || place.region))}`
+          href={place.googlePlaceId && place.lat && place.lon
+            ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}&destination_place_id=${place.googlePlaceId}`
+            : place.lat && place.lon
+              ? `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}`
+              : `https://www.google.com/maps/search/${encodeURIComponent(place.name + ' ' + (place.country || 'Slovenia'))}`
           }
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-1 text-water-400 hover:text-water-300 text-xs transition-colors"
         >
-          <MapPin className="w-3 h-3" /> Google Maps
+          <MapPin className="w-3 h-3" /> Nawiguj
         </a>
       </div>
 

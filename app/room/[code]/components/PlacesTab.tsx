@@ -1,12 +1,29 @@
 'use client'
 
 
+const SUBREDDIT_BLACKLIST = new Set([
+  'leopardsatemyface','politics','worldnews','news','conspiracy','memes','funny',
+  'gaming','sports','nfl','nba','soccer','movies','television','music','stocks',
+  'wallstreetbets','cryptocurrency','bitcoin','dating','relationship_advice',
+  'amitheasshole','tifu','askreddit','showerthoughts','todayilearned',
+  'nottheonion','upliftingnews','facepalm','mildlyinfuriating','nextfuckinglevel',
+  'unexpected','oddlysatisfying','damnthatsinteresting','interestingasfuck',
+])
+
+function getPostPriority(subreddit: string, prioritySubreddits: string[]): number {
+  const sub = subreddit.toLowerCase()
+  if (SUBREDDIT_BLACKLIST.has(sub)) return -1 // odrzuć
+  if (prioritySubreddits.map(s => s.toLowerCase()).includes(sub)) return 2 // priorytet
+  return 1 // normalny
+}
+
 async function fetchRedditFromBrowser(
   activities: string[], region: string, baseCity: string,
   tripDays: number | null, month: number | null,
   transport: string, accommodation: string, intensity: string,
   budget: string, food: string[], numPeople: number,
-  prebuiltQueries?: string[]
+  prebuiltQueries?: string[],
+  prioritySubreddits?: string[]
 ): Promise<any[]> {
   // Użyj gotowych zapytań od DeepSeek lub fallback
   const queries = prebuiltQueries && prebuiltQueries.length > 0
@@ -26,13 +43,12 @@ async function fetchRedditFromBrowser(
     const results = await Promise.allSettled(
       batch.map(async (query) => {
         const res = await fetch(
-          `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&limit=10&t=year`,
+          `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=15&t=year`,
           { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }
         )
         if (!res.ok) return []
         const data = await res.json()
         return (data.data?.children || [])
-          .filter((c: any) => c.data.score >= 3)
           .map((c: any) => ({
             title: c.data.title,
             score: c.data.score,
@@ -40,7 +56,9 @@ async function fetchRedditFromBrowser(
             subreddit: c.data.subreddit,
             text: (c.data.selftext || '').slice(0, 400),
             numComments: c.data.num_comments || 0,
+            priority: getPostPriority(c.data.subreddit, prioritySubreddits || []),
           }))
+          .filter((p: any) => p.priority >= 0 && p.score >= 3)
       })
     )
 
@@ -56,6 +74,11 @@ async function fetchRedditFromBrowser(
     }
   }
 
+  // Sortuj — priorytetowe subreddity pierwsze, potem po score
+  allPosts.sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority
+    return b.score - a.score
+  })
   return allPosts.slice(0, 50)
 }
 

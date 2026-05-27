@@ -255,7 +255,7 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
   const [noteText, setNoteText] = useState('')
   const [showSources, setShowSources] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
-  const matches = place.tags.filter(t => groupActivities.includes(t))
+  const matches = (place.tags || []).filter(t => groupActivities.includes(t))
   const isMatch = matches.length > 0
 
   return (
@@ -396,16 +396,17 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
           {place.sourceCount}x · {place.sentiment}
           <ChevronDown className={`w-3 h-3 transition-transform ${showSources ? 'rotate-180' : ''}`} />
         </button>
-        {place.lat && place.lon && (
-          <a
-            href={`https://maps.google.com/?q=${place.lat},${place.lon}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-water-400 hover:text-water-300 text-xs transition-colors"
-          >
-            <MapPin className="w-3 h-3" /> Google Maps
-          </a>
-        )}
+        <a
+          href={place.lat && place.lon
+            ? `https://maps.google.com/?q=${place.lat},${place.lon}`
+            : `https://maps.google.com/search/${encodeURIComponent(place.name + ' ' + (place.country || place.region))}`
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-water-400 hover:text-water-300 text-xs transition-colors"
+        >
+          <MapPin className="w-3 h-3" /> Google Maps
+        </a>
       </div>
 
       {/* Reddit sources */}
@@ -559,8 +560,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       if (res.ok) {
         const data = await res.json()
         const newPlaces = (data.places || []).filter(
-          (np: AIPlace) => !aiPlaces.find(ep => ep.name === np.name)
-        )
+          (np: AIPlace) => np && np.name && !aiPlaces.find(ep => ep.name === np.name)
+        ).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
         const updated = [...aiPlaces, ...newPlaces]
         for (const place of newPlaces) {
           await new Promise(r => setTimeout(r, 150))
@@ -627,7 +628,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       setFadingOut(true)
       await new Promise(r => setTimeout(r, 500))
       // Weryfikacja przez Google Places
-      let firstBatch = data1.places || []
+      let firstBatch = (data1.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
       try {
         const verifyRes = await fetch('/api/verify', {
           method: 'POST',
@@ -721,8 +722,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     const tagOk = activeTag === null || p.tags.includes(activeTag)
     return regionOk && tagOk
   })
-  const matchingPlaces = filteredPlaces.filter(p => p.tags.some(t => groupActivities.includes(t)))
-  const otherPlaces = filteredPlaces.filter(p => !p.tags.some(t => groupActivities.includes(t)))
+  const matchingPlaces = filteredPlaces.filter(p => (p.tags || []).some(t => groupActivities.includes(t)))
+  const otherPlaces = filteredPlaces.filter(p => !(p.tags || []).some(t => groupActivities.includes(t)))
 
   return (
     <div className="px-4 py-5 max-w-lg mx-auto space-y-5">

@@ -1,39 +1,22 @@
 'use client'
 
 
-function buildClientQueries(activities: string[], region: string, baseCity: string): string[] {
-  const country = region === 'budapest' ? 'Hungary Budapest' : region
-  const queries: string[] = []
-
-  const TEMPLATES: Record<string, string[]> = {
-    sup: [`${country} SUP paddleboard lake`, `${country} kayak river hidden`, `${baseCity} water swimming spot`, `${country} best lake swim reddit`],
-    trekking: [`${country} hiking trail recommend`, `${country} best hike hidden gem`, `${baseCity} hiking day trip`, `${country} waterfall trail`],
-    food: [`${country} local restaurant must try`, `${baseCity} best food local eat`, `${country} hidden restaurant authentic`, `${country} traditional food reddit`],
-    sunset: [`${country} best viewpoint sunset`, `${baseCity} panorama view`, `${country} photography landscape spot`],
-    sightseeing: [`${country} hidden gem tourist`, `${baseCity} worth visiting`, `${country} underrated off beaten path`],
-    nightlife: [`${baseCity} bar nightlife recommend`, `${country} craft beer local bar`],
-    markets: [`${baseCity} local market farmers`, `${country} market souvenir local`],
-    photo: [`${country} photography spot`, `${baseCity} instagram location`],
-    relax: [`${country} thermal spa bath`, `${country} peaceful relax nature`],
-    cycling: [`${country} cycling route bike trail`, `${baseCity} bike path`],
-  }
-
-  for (const act of activities) {
-    queries.push(...(TEMPLATES[act] || []))
-  }
-
-  queries.push(
-    `${country} travel tips hidden gem`,
-    `${baseCity} what to do visit`,
-    `${country} recommend reddit`,
-    `visit ${country} advice`,
-  )
-
-  return Array.from(new Set(queries)).slice(0, 20)
-}
-
-async function fetchRedditFromBrowser(activities: string[], region: string, baseCity: string): Promise<any[]> {
-  const queries = buildClientQueries(activities, region, baseCity)
+async function fetchRedditFromBrowser(
+  activities: string[], region: string, baseCity: string,
+  tripDays: number | null, month: number | null,
+  transport: string, accommodation: string, intensity: string,
+  budget: string, food: string[], numPeople: number,
+  prebuiltQueries?: string[]
+): Promise<any[]> {
+  // Użyj gotowych zapytań od DeepSeek lub fallback
+  const queries = prebuiltQueries && prebuiltQueries.length > 0
+    ? prebuiltQueries
+    : [
+        `${region} hidden gem travel`,
+        `${baseCity} local tips`,
+        `${region} recommend reddit`,
+        `visit ${region} advice`,
+      ]
   const allPosts: any[] = []
   const seenUrls = new Set<string>()
 
@@ -531,9 +514,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     // Szuka kolejnej partii i dodaje do istniejących
     const region = activeRegion === 'all' ? 'slovenia' : activeRegion
     let posts: any[] = []
-    try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana') } catch {}
+    try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, myPrefs.transport, myPrefs.accommodation, myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4, []) } catch {}
 
-    const tripDays = room.start_date && room.end_date
+    const tripDays2 = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
 
@@ -547,7 +530,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       numPeople: room.num_people || 4,
       startDate: room.start_date,
       endDate: room.end_date,
-      tripDays,
+      tripDays: tripDays2,
       batch: 2,
     }
 
@@ -573,6 +556,34 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoadingMore(false)
   }
 
+  async function verifyAndMerge(places: AIPlace[], region: string): Promise<AIPlace[]> {
+    try {
+      const verifyRes = await fetch('/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ places: places.map(p => ({ name: p.name, region: p.region || region, country: p.country })) }),
+      })
+      if (!verifyRes.ok) return places
+      const verifyData = await verifyRes.json()
+      return places.map(p => {
+        const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
+        if (!v?.verified) return p
+        return {
+          ...p,
+          verified: true,
+          lat: v.lat || p.lat,
+          lon: v.lon || p.lon,
+          googleRating: v.rating,
+          googleTotalRatings: v.totalRatings,
+          isOpen: v.isOpen,
+          googleAddress: v.address,
+        }
+      })
+    } catch {
+      return places
+    }
+  }
+
   async function handleSearch() {
     setLoading(true)
     setError('')
@@ -581,21 +592,19 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setScanPhase(0)
     setPostsScanned(0)
     setSearchCount(c => c + 1)
-    setScanPhase(0)
-    setPostsScanned(0)
 
     const region = activeRegion === 'all' ? 'slovenia' : activeRegion
 
-    // Pobierz posty z Reddit z przeglądarki
+    // Pobierz posty z Reddit
     let posts: any[] = []
     try {
-      posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana')
+      posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, '', '', '', 'any', [], 4, [])
       setPostsScanned(posts.length)
     } catch {}
 
     setScanPhase(1)
 
-    const tripDays = room.start_date && room.end_date
+    const tripDays2 = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
 
@@ -603,87 +612,77 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       posts,
       activities: groupActivities,
       region,
+      baseCity: room.end_city || 'Ljubljana',
       transport: myPrefs.transport || myPrefs.accommodation,
       accommodation: myPrefs.accommodation,
       intensity: myPrefs.intensity,
       numPeople: room.num_people || 4,
       startDate: room.start_date,
       endDate: room.end_date,
-      tripDays,
+      tripDays: tripDays2,
     }
 
     try {
-      // Batch 1 — pierwsze 10 miejsc
       setScanPhase(2)
       const res1 = await fetch('/api/places', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, batch: 1 }),
       })
-
       if (!res1.ok) throw new Error('Błąd API')
       const data1 = await res1.json()
       setScanPhase(3)
-      // Fade out animacji
-      setFadingOut(true)
-      await new Promise(r => setTimeout(r, 500))
-      // Weryfikacja przez Google Places
-      let firstBatch = (data1.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-      try {
-        const verifyRes = await fetch('/api/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ places: firstBatch.map((p: AIPlace) => ({ name: p.name, region: p.region, country: p.country })) }),
-        })
-        if (verifyRes.ok) {
-          const verifyData = await verifyRes.json()
-          firstBatch = firstBatch
-            .filter((p: AIPlace) => {
-              const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
-              return !v || v.verified // Zostaw jeśli zweryfikowane lub brak odpowiedzi
-            })
-            .map((p: AIPlace) => {
-              const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
-              if (!v?.verified) return p
-              return {
-                ...p,
-                verified: true,
-                lat: v.lat || p.lat,
-                lon: v.lon || p.lon,
-                googleRating: v.rating,
-                googleTotalRatings: v.totalRatings,
-                isOpen: v.isOpen,
-                googleAddress: v.address,
-              }
-            })
-        }
-      } catch {}
 
+      // Pokaż pierwsze wyniki od razu (bez czekania na verify)
+      let firstBatch = (data1.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+      setFadingOut(true)
+      await new Promise(r => setTimeout(r, 400))
       setAiPlaces(firstBatch)
       setLoading(false)
       setFadingOut(false)
-      // Fade in wyników
       await new Promise(r => setTimeout(r, 50))
       setResultsVisible(true)
 
-      // Batch 2 — kolejne 10 miejsc w tle
-      const res2 = await fetch('/api/places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, batch: 2 }),
+      // Weryfikacja batch 1 + kolejne batche — wszystko w tle
+      let allPlaces = [...firstBatch]
+
+      // Weryfikuj batch 1 w tle i aktualizuj badge'i
+      verifyAndMerge(firstBatch, region).then(verified => {
+        allPlaces = verified
+        setAiPlaces(verified)
       })
 
-      let allPlaces = [...firstBatch]
-      if (res2.ok) {
-        const data2 = await res2.json()
-        for (const place of (data2.places || [])) {
-          await new Promise(r => setTimeout(r, 150))
-          allPlaces = [...allPlaces, place]
-          setAiPlaces(prev => [...prev, place])
-        }
+      // Batch 2, 3, 4 — w tle, dodawaj sukcesywnie
+      for (let batch = 2; batch <= 4; batch++) {
+        try {
+          const res = await fetch('/api/places', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, batch }),
+          })
+          if (!res.ok) continue
+          const data = await res.json()
+          const newPlaces = (data.places || [])
+            .filter((p: AIPlace) => p?.name && !allPlaces.find(ep => ep.name === p.name))
+            .map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+
+          // Dodaj bez verify
+          for (const place of newPlaces) {
+            await new Promise(r => setTimeout(r, 100))
+            allPlaces = [...allPlaces, place]
+            setAiPlaces(prev => [...prev, place])
+          }
+
+          // Weryfikuj nowe w tle
+          verifyAndMerge(newPlaces, region).then(verified => {
+            setAiPlaces(prev => prev.map(p => {
+              const v = verified.find(vp => vp.name === p.name)
+              return v || p
+            }))
+          })
+        } catch {}
       }
 
-      // Zapisz wszystkie wyniki
       await saveRecommendations(allPlaces, posts.length)
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')

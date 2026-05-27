@@ -48,6 +48,12 @@ const TRANSPORT = [
   { id: 'motorcycle', emoji: '🏍️', label: 'Motocykl' },
 ]
 
+const BUDGET = [
+  { id: 'budget', emoji: '💸', label: 'Tani', desc: 'Street food, bary, kampingi' },
+  { id: 'mid', emoji: '💰', label: 'Średni', desc: 'Lokalne restauracje, Airbnb' },
+  { id: 'any', emoji: '🎯', label: 'Budżet nieważny', desc: 'Nie bierzemy pod uwagę' },
+]
+
 const FOOD = [
   { id: 'vegetarian', label: '🥦 Wegetariańskie' },
   { id: 'vegan', label: '🌱 Wegańskie' },
@@ -82,6 +88,7 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
   const [accommodation, setAccommodation] = useState<string>(existingPrefs?.accommodation || '')
   const [food, setFood] = useState<string[]>(existingPrefs?.food || [])
   const [transport, setTransport] = useState<string>(room.transport || '')
+  const [budget, setBudget] = useState<string>('any')
   const [endDate, setEndDate] = useState(room.end_date || '')
   const [startDate, setStartDate] = useState(room.start_date || '')
   const [startCity, setStartCity] = useState(room.start_city || '')
@@ -116,7 +123,7 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
     setSaving(true)
     if (userName.trim()) setSessionName(userName.trim())
     await onComplete(
-      { activities, intensity: intensity as any, accommodation: accommodation as any, food, transport },
+      { activities, intensity: intensity as any, accommodation: accommodation as any, food, transport, budget },
       { start_date: startDate || undefined, end_date: endDate || undefined, start_city: startCity, end_city: endCity, transport }
     )
     setSaving(false)
@@ -328,10 +335,38 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
             <div className="space-y-5">
               <div>
                 <h2 className="font-display text-2xl font-bold text-stone-50 mb-1">
-                  Jak z jedzeniem?
+                  Jedzenie & budżet
                 </h2>
-                <p className="text-stone-500 text-xs">Możesz wybrać kilka opcji.</p>
+                <p className="text-stone-500 text-xs">Możesz wybrać kilka opcji jedzenia.</p>
               </div>
+
+              {/* Budżet */}
+              <div>
+                <p className="text-xs text-stone-500 font-medium mb-2">💰 Budżet podróży</p>
+                <div className="flex gap-2">
+                  {BUDGET.map(opt => {
+                    const selected = budget === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => setBudget(opt.id)}
+                        className={`flex-1 flex flex-col items-center px-2 py-3 rounded-xl border text-center transition-all duration-150 active:scale-[0.98] ${
+                          selected
+                            ? 'bg-sand-600/15 border-sand-500 text-sand-300'
+                            : 'bg-stone-800/60 border-stone-700 text-stone-400 hover:border-stone-600'
+                        }`}
+                      >
+                        <span className="text-xl mb-1">{opt.emoji}</span>
+                        <span className="font-medium text-xs">{opt.label}</span>
+                        <span className="text-stone-600 text-xs mt-0.5 leading-tight">{opt.desc}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="h-px bg-stone-800" />
+              <p className="text-xs text-stone-500 font-medium">🍽️ Preferencje jedzenia</p>
               <div className="space-y-2">
                 {FOOD.map(opt => {
                   const selected = food.includes(opt.id)

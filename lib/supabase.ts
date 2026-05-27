@@ -34,6 +34,7 @@ export type UserPreference = {
   intensity: 'slow' | 'balanced' | 'intense'
   accommodation: string
   transport: string
+  budget: string
   food: string[]
   completed: boolean
   created_at: string

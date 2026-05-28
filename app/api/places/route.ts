@@ -336,7 +336,8 @@ function normalizeEnrichedResult(params: {
       if (typeof item.googleIndex === 'number') {
         gPlace = googlePlaces[item.googleIndex]
       } else if (typeof item.name === 'string') {
-        gPlace = googlePlaces.find((g) => g.name.toLowerCase() === item.name!.toLowerCase())
+        const itemName = item.name
+        gPlace = googlePlaces.find((g) => g.name.toLowerCase() === itemName.toLowerCase())
       }
       if (!gPlace) return null
 

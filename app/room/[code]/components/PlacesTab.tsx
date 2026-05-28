@@ -109,6 +109,11 @@ interface AIPlace {
   name: string
   description?: string
   whyThisGroup?: string
+  groupFitNote?: string
+  bestTime?: string
+  visitTips?: string
+  reviewSummary?: string
+  recentReviewHighlights?: string[]
   tags: string[]
   region?: string
   subregion?: string
@@ -134,6 +139,8 @@ interface AIPlace {
   redditSources?: { title: string; url: string; score: number; subreddit: string }[]
   sources?: { title: string; url: string; score: number; subreddit: string }[]
 }
+
+type SearchMode = 'standard' | 'research'
 
 const ACTIVITY_TAGS: Record<string, string> = {
   sup: '🏄 SUP', trekking: '🥾 Trekking', food: '🍽️ Jedzenie',
@@ -404,6 +411,42 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
               <span className="text-stone-300">{COST_LABEL[place.estimatedCost] || place.estimatedCost}</span>
             </div>
           )}
+          {place.groupFitNote && (
+            <div>
+              <span className="text-stone-500">Dopasowanie ekipy: </span>
+              <span className="text-stone-400">{place.groupFitNote}</span>
+            </div>
+          )}
+          {place.bestTime && (
+            <div>
+              <span className="text-stone-500">Najlepszy czas: </span>
+              <span className="text-stone-400">{place.bestTime}</span>
+            </div>
+          )}
+          {place.visitTips && (
+            <div>
+              <span className="text-stone-500">Wskazówki: </span>
+              <span className="text-stone-400">{place.visitTips}</span>
+            </div>
+          )}
+          {place.reviewSummary && (
+            <div>
+              <span className="text-stone-500">Opinie: </span>
+              <span className="text-stone-400">{place.reviewSummary}</span>
+            </div>
+          )}
+          {place.recentReviewHighlights && place.recentReviewHighlights.length > 0 && (
+            <div>
+              <span className="text-stone-500">Świeże opinie:</span>
+              <ul className="mt-1 space-y-1">
+                {place.recentReviewHighlights.slice(0, 3).map((line, idx) => (
+                  <li key={`${place.name}-review-${idx}`} className="text-stone-400 text-[11px]">
+                    • {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {place.country && (
             <div className="flex items-center justify-between">
               <span className="text-stone-500">🌍 Kraj</span>
@@ -524,7 +567,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [showAll, setShowAll] = useState(false)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [activeSource, setActiveSource] = useState<'google' | 'reddit'>('google')
+  const [searchMode, setSearchMode] = useState<SearchMode>('standard')
   const [loadingMore, setLoadingMore] = useState(false)
+  const [enriching, setEnriching] = useState(false)
   const [error, setError] = useState('')
   const sessionId = getSessionId()
 
@@ -586,6 +631,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       posts,
       activities: groupActivities,
       region,
+      searchMode,
       transport: myPrefs.transport || myPrefs.accommodation,
       accommodation: myPrefs.accommodation,
       intensity: myPrefs.intensity,
@@ -665,6 +711,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
   async function handleSearch() {
     setLoading(true)
+    setEnriching(false)
     setError('')
     setAiPlaces([])
     setLocalGems([])
@@ -685,6 +732,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       transport: myPrefs.transport, accommodation: myPrefs.accommodation,
       intensity: myPrefs.intensity, numPeople: room.num_people || 4,
       budget: myPrefs.budget || 'any', food: myPrefs.food || [],
+      searchMode,
       tripDays: tripDaysCalc, month: monthCalc,
     }
 
@@ -742,6 +790,25 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     }
 
     setScanPhase(2)
+    const hasEarlyGoogleResults = googlePlaces.length > 0
+
+    if (hasEarlyGoogleResults) {
+      const quickPlaces = googlePlaces.map((p: any) => ({
+        ...p,
+        tags: p.tags || [],
+        description: p.description || 'Trwa analiza AI...',
+        whyThisGroup: p.whyThisGroup || 'Dopasowanie do profilu grupy: trwa analiza',
+        groupFitNote: p.groupFitNote || 'trwa analiza',
+        bestTime: p.bestTime || 'brak danych',
+        visitTips: p.visitTips || 'brak danych',
+        reviewSummary: p.reviewSummary || 'brak danych',
+        recentReviewHighlights: p.recentReviewHighlights || [],
+      }))
+      setAiPlaces(quickPlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
+      setResultsVisible(true)
+      setLoading(false)
+    }
+    setEnriching(true)
 
     // Krok 3: DeepSeek wzbogaca miejsca Google + wyciąga Local Gems
     // Wysyłamy oba: google places + posty Reddit
@@ -751,6 +818,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         body: JSON.stringify({
           posts, googlePlaces,
           activities: groupActivities, region,
+          searchMode,
           baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation,
           accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
           numPeople: room.num_people || 4, startDate: room.start_date,
@@ -774,11 +842,14 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       }
 
       // Pokaż wyniki
-      setFadingOut(true)
-      await new Promise(r => setTimeout(r, 400))
+      if (!hasEarlyGoogleResults) {
+        setFadingOut(true)
+        await new Promise(r => setTimeout(r, 400))
+      }
       setAiPlaces(enrichedPlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
       setLocalGems(newLocalGems)
       setLoading(false)
+      setEnriching(false)
       setFadingOut(false)
       await new Promise(r => setTimeout(r, 50))
       setResultsVisible(true)
@@ -804,7 +875,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
             // Wzbogać nowe miejsca
             const enrichRes2 = await fetch('/api/places', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
+              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, searchMode, baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
             })
             if (!enrichRes2.ok) continue
             const eData = await enrichRes2.json()
@@ -827,6 +898,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
     } catch (e) {
       setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
+      setEnriching(false)
       setLoading(false)
     }
   }
@@ -893,16 +965,49 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
 
 
+      {/* Tryb wyszukiwania */}
+      {!loading && (
+        <div className="bg-stone-900/40 border border-stone-700/40 rounded-xl p-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setSearchMode('standard')}
+              className={`px-3 py-2 rounded-lg text-xs font-medium border transition-all ${
+                searchMode === 'standard'
+                  ? 'bg-water-900/30 border-water-600/40 text-water-300'
+                  : 'bg-stone-800/40 border-stone-700/40 text-stone-400'
+              }`}
+            >
+              Standard (Google-first)
+            </button>
+            <button
+              onClick={() => setSearchMode('research')}
+              className={`px-3 py-2 rounded-lg text-xs font-medium border transition-all ${
+                searchMode === 'research'
+                  ? 'bg-amber-900/30 border-amber-600/40 text-amber-300'
+                  : 'bg-stone-800/40 border-stone-700/40 text-stone-400'
+              }`}
+            >
+              Research (lokalne)
+            </button>
+          </div>
+          <p className="text-[11px] text-stone-500 mt-2 px-1">
+            {searchMode === 'standard'
+              ? 'Tryb standard: sprawdzone i popularne miejsca + AI podsumowanie dla całej ekipy.'
+              : 'Tryb research: mocniejszy nacisk na lokalne perełki i mniej oczywiste rekomendacje.'}
+          </p>
+        </div>
+      )}
+
       {/* Przyciski */}
       {!loading && (
         <div className="flex gap-2">
-          <button onClick={handleSearch}
-            className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
+          <button onClick={handleSearch} disabled={enriching || loadingMore}
+            className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 disabled:opacity-60 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
             <RefreshCw className="w-4 h-4" />
-            {aiPlaces.length > 0 ? 'Odśwież' : 'Szukaj dla ekipy'}
+            {enriching ? 'AI dopracowuje...' : aiPlaces.length > 0 ? 'Odśwież' : 'Szukaj dla ekipy'}
           </button>
           {aiPlaces.length > 0 && (
-            <button onClick={handleSearchMore} disabled={loadingMore}
+            <button onClick={handleSearchMore} disabled={loadingMore || enriching}
               className="flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 disabled:opacity-60 border border-stone-700 text-stone-300 rounded-2xl px-4 font-semibold text-sm transition-all active:scale-95">
               {loadingMore ? (
                 <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Szukam...</>
@@ -923,6 +1028,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
+      {!loading && enriching && (
+        <p className="text-water-300 text-xs bg-water-900/20 border border-water-800/30 rounded-xl px-4 py-3">
+          Miejsca z Google są już widoczne. AI właśnie dogrywa opisy, wskazówki i lokalne perełki.
+        </p>
+      )}
 
       {/* Zakładki Google / Reddit */}
       {!loading && (aiPlaces.length > 0 || localGems.length > 0) && (
@@ -1026,6 +1136,34 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Wyniki Reddit / lokalne perełki */}
+      {!loading && activeSource === 'reddit' && localGems.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider">
+            Lokalne perełki ({localGems.length})
+          </p>
+          {localGems.map(place => (
+            <PlaceCard
+              key={place.name}
+              place={place}
+              groupActivities={groupActivities}
+              isSaved={savedPlaces.some(s => s.place_name === place.name)}
+              onSave={() => savePlace(place)}
+              savedData={savedPlaces.find(s => s.place_name === place.name)}
+              onVote={() => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) votePlace(sp.id, sp.voters as string[], sp.votes) }}
+              onAddNote={text => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) addNote(sp.id, text) }}
+              sessionId={sessionId}
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && activeSource === 'reddit' && localGems.length === 0 && (
+        <p className="text-xs text-stone-500 bg-stone-800/40 border border-stone-700/40 rounded-xl px-4 py-3">
+          Brak lokalnych perełek dla tego wyszukiwania. Spróbuj trybu Research lub odśwież wyniki.
+        </p>
       )}
 
       {/* Zapisane */}

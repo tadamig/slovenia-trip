@@ -10,12 +10,28 @@ const REGION_TO_COUNTRY: Record<string, string> = {
 
 export async function POST(request: NextRequest) {
   try {
-    const { activities = [], baseCity, region, transport, accommodation, intensity, numPeople, budget, food = [], tripDays, month } = await request.json()
+    const {
+      activities = [],
+      baseCity,
+      region,
+      transport,
+      accommodation,
+      intensity,
+      numPeople,
+      budget,
+      food = [],
+      tripDays,
+      month,
+      searchMode = 'standard',
+    } = await request.json()
     if (!baseCity || !region) return NextResponse.json({ queries: [], subreddits: [] }, { status: 400 })
 
     const country = REGION_TO_COUNTRY[region.toLowerCase()] || region
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
     const monthName = month ? MONTH_NAMES[month - 1] : 'summer'
+    const modeHint = searchMode === 'research'
+      ? 'Strongly prioritize local gems, viewpoints, hidden nature spots, and discussions from local communities.'
+      : 'Keep a balanced mix of mainstream recommendations and useful local tips.'
 
     const prompt = `Generate 15 Reddit search queries for finding local tips about ${baseCity}, ${country} in ${monthName}.
 
@@ -25,10 +41,13 @@ Trip profile:
 - Transport: ${transport || 'car'}, Accommodation: ${accommodation || 'various'}
 - Pace: ${intensity || 'balanced'}
 - Budget: ${budget || 'any'}
+- Mode: ${searchMode}
+- Guidance: ${modeHint}
 
 Rules:
 - Conversational, like what locals or travelers would search
-- Focus on hidden gems, local tips, off-beaten-path
+- Include both English and local-language query variants
+- In research mode, bias toward hidden gems, local tips, off-beaten-path
 - 3-8 words each, no quotes
 
 Also return 10-12 relevant subreddit names.

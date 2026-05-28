@@ -10,19 +10,33 @@ const REGION_TO_COUNTRY: Record<string, string> = {
 
 export async function POST(request: NextRequest) {
   try {
-    const { activities = [], baseCity, region, budget, food = [], tripDays, month } = await request.json()
+    const {
+      activities = [],
+      baseCity,
+      region,
+      budget,
+      food = [],
+      tripDays,
+      month,
+      searchMode = 'standard',
+    } = await request.json()
     if (!baseCity || !region) return NextResponse.json({ queries: [] }, { status: 400 })
 
     const country = REGION_TO_COUNTRY[region.toLowerCase()] || region
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
     const monthName = month ? MONTH_NAMES[month - 1] : 'summer'
     const budgetHint = budget === 'budget' ? 'budget cheap' : budget === 'mid' ? 'mid-range' : ''
+    const modeHint = searchMode === 'research'
+      ? 'Focus: local and less obvious discoveries, viewpoints, hidden lakes, trails, and authentic local food.'
+      : 'Focus: balanced and reliable trip spots, including popular attractions and practical choices.'
 
     const prompt = `Generate 15 Google Places search queries for a trip to ${baseCity}, ${country} in ${monthName}.
 
 Activities: ${(activities || []).join(', ') || 'sightseeing'}
 ${budgetHint ? `Budget: ${budgetHint}` : ''}
 ${food.length > 0 && !food.includes('anything') ? `Food: ${food.join(', ')}` : ''}
+Mode: ${searchMode}
+${modeHint}
 
 Rules:
 - 2-3 queries per activity targeting ${baseCity} or ${country}

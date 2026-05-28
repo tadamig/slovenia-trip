@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const maxDuration = 30
+
 // Mapowanie region → kraj w języku angielskim
 const REGION_TO_COUNTRY: Record<string, string> = {
   slovenia: 'Slovenia',
@@ -105,12 +107,17 @@ redditQueries: 20 conversational Reddit search queries (3-8 words).
 
 subreddits: 15-20 relevant subreddit names (without r/ prefix).`
 
-    const res = await fetch('https://api.deepseek.com/chat/completions', {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 25000)
+    let res: Response
+    try {
+      res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
       },
+        signal: controller.signal,
       body: JSON.stringify({
         model: 'deepseek-chat',
         max_tokens: 800,
@@ -120,6 +127,12 @@ subreddits: 15-20 relevant subreddit names (without r/ prefix).`
         ],
       }),
     })
+
+    } catch {
+      clearTimeout(timeoutId)
+      return NextResponse.json({ queries: getFallbackQueries(activities || [], baseCity, country), googleQueries: getFallbackGoogleQueries(activities || [], baseCity, country), subreddits: [] })
+    }
+    clearTimeout(timeoutId)
 
     if (!res.ok) {
       return NextResponse.json({ queries: getFallbackQueries(activities || [], baseCity, country), googleQueries: getFallbackGoogleQueries(activities || [], baseCity, country), subreddits: [] })

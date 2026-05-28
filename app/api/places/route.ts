@@ -433,6 +433,18 @@ export async function POST(request: NextRequest) {
     const maxGooglePlaces = batch === 1 ? 16 : 10
     const posts = inputPosts.slice(0, maxPosts)
     const googlePlaces = inputGooglePlaces.slice(0, maxGooglePlaces)
+    const diagnostics = {
+      inputPosts: inputPosts.length,
+      inputGooglePlaces: inputGooglePlaces.length,
+      postsSentToAI: posts.length,
+      googlePlacesSentToAI: googlePlaces.length,
+      batch,
+      searchMode,
+      retriedParse: false,
+      parseOk: false,
+      deepseekStatus: 0,
+      deepseekError: '',
+    }
 
     if (!region || !baseCity) {
       return NextResponse.json({
@@ -440,11 +452,12 @@ export async function POST(request: NextRequest) {
         localGems: [],
         postsAnalyzed: 0,
         error: 'Missing region or baseCity',
+        meta: diagnostics,
       })
     }
 
     if (posts.length === 0 && googlePlaces.length === 0) {
-      return NextResponse.json({ places: [], localGems: [], postsAnalyzed: 0 })
+      return NextResponse.json({ places: [], localGems: [], postsAnalyzed: 0, meta: diagnostics })
     }
 
     const country = REGION_TO_COUNTRY[region.toLowerCase()] || region
@@ -474,12 +487,14 @@ export async function POST(request: NextRequest) {
 
     const maxTokens = hasGooglePlaces ? 2200 : 1700
     const deepseekRes = await callDeepSeek(prompt, maxTokens)
+    diagnostics.deepseekStatus = deepseekRes.status
     if (!deepseekRes.ok) {
       return NextResponse.json({
         places: [],
         localGems: [],
         postsAnalyzed: posts.length,
         error: 'DeepSeek error',
+        meta: diagnostics,
       })
     }
 
@@ -489,10 +504,12 @@ export async function POST(request: NextRequest) {
 
     // One retry only when the model returns an invalid payload.
     if (!parsed) {
+      diagnostics.retriedParse = true
       const retryRes = await callDeepSeek(
         `${prompt}\n\nPOPRAWKA: odpowiedz musi byc jednym obiektem JSON bez markdown i bez dodatkowego tekstu.`,
         maxTokens,
       )
+      diagnostics.deepseekStatus = retryRes.status
       if (retryRes.ok) {
         const retryData = await retryRes.json()
         const retryRawText = retryData.choices?.[0]?.message?.content || '{}'
@@ -501,6 +518,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!parsed) parsed = {}
+    diagnostics.parseOk = Object.keys(parsed).length > 0
 
     if (hasGooglePlaces) {
       const { enriched, localGems } = normalizeEnrichedResult({ parsed, googlePlaces, posts })
@@ -511,9 +529,9 @@ export async function POST(request: NextRequest) {
           ? enriched
           : googlePlaces.map((p) => ({
               ...p,
-              description: 'brak danych',
-              whyThisGroup: 'Dopasowanie do profilu grupy: brak danych',
-              groupFitNote: 'brak danych',
+              description: asString(p.description, 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.'),
+              whyThisGroup: 'Google zwrocil miejsce, ale AI nie wygenerowalo dopasowania.',
+              groupFitNote: 'AI: brak odpowiedzi',
               bestTime: 'brak danych',
               visitTips: 'brak danych',
               reviewSummary: 'brak danych',
@@ -531,7 +549,7 @@ export async function POST(request: NextRequest) {
         localGems,
         postsAnalyzed: posts.length,
         meta: {
-          searchMode,
+          ...diagnostics,
           usedFallback: enriched.length === 0,
         },
       })
@@ -542,7 +560,7 @@ export async function POST(request: NextRequest) {
       places,
       localGems: [],
       postsAnalyzed: posts.length,
-      meta: { searchMode, usedFallback: false },
+      meta: { ...diagnostics, usedFallback: false },
     })
   } catch (err) {
     return NextResponse.json({
@@ -550,6 +568,9 @@ export async function POST(request: NextRequest) {
       localGems: [],
       postsAnalyzed: 0,
       error: String(err),
+      meta: {
+        deepseekError: String(err),
+      },
     })
   }
 }

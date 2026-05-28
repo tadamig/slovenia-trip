@@ -11,6 +11,14 @@ type RedditPost = {
   numComments: number
 }
 
+type FetchStats = {
+  source: string
+  ok: boolean
+  status?: number
+  error?: string
+  count: number
+}
+
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
 }
@@ -32,33 +40,49 @@ async function fetchRedditQuery(
   sort: string,
   limit: number,
   time: string,
-): Promise<RedditPost[]> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10000)
+): Promise<{ posts: RedditPost[]; stats: FetchStats[] }> {
+  const sources = [
+    'https://www.reddit.com/search.json',
+    'https://old.reddit.com/search.json',
+  ]
+  const stats: FetchStats[] = []
 
-  try {
-    const res = await fetch(
-      `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=${sort}&limit=${limit}&t=${time}`,
-      {
-        headers: {
-          'User-Agent': 'TripPlannerBot/1.0 (+https://vercel.app)',
-          Accept: 'application/json',
+  for (const source of sources) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 10000)
+    try {
+      const res = await fetch(
+        `${source}?q=${encodeURIComponent(query)}&sort=${sort}&limit=${limit}&t=${time}`,
+        {
+          headers: {
+            'User-Agent': 'TripPlannerBot/1.0 (+https://vercel.app)',
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+          cache: 'no-store',
         },
-        signal: controller.signal,
-        cache: 'no-store',
-      },
-    )
+      )
 
-    if (!res.ok) return []
-    const data = await res.json()
-    return asArray<any>(data?.data?.children)
-      .map(normalizePost)
-      .filter(Boolean) as RedditPost[]
-  } catch {
-    return []
-  } finally {
-    clearTimeout(timeout)
+      if (!res.ok) {
+        stats.push({ source, ok: false, status: res.status, count: 0 })
+        continue
+      }
+
+      const data = await res.json()
+      const posts = asArray<any>(data?.data?.children)
+        .map(normalizePost)
+        .filter(Boolean) as RedditPost[]
+
+      stats.push({ source, ok: true, status: res.status, count: posts.length })
+      if (posts.length > 0) return { posts, stats }
+    } catch (error) {
+      stats.push({ source, ok: false, count: 0, error: String(error) })
+    } finally {
+      clearTimeout(timeout)
+    }
   }
+
+  return { posts: [], stats }
 }
 
 function dedupeAndRank(posts: RedditPost[]) {
@@ -72,10 +96,11 @@ function dedupeAndRank(posts: RedditPost[]) {
   }
 
   return unique
-    .filter((p) => p.score >= 2)
+    .filter((p) => p.score >= 0)
     .sort((a, b) => {
+      if (b.numComments !== a.numComments) return b.numComments - a.numComments
       if (b.score !== a.score) return b.score - a.score
-      return b.numComments - a.numComments
+      return b.title.length - a.title.length
     })
 }
 
@@ -86,8 +111,11 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(Number(searchParams.get('limit') || 15), 25)
   const time = searchParams.get('t') || 'year'
 
-  const posts = await fetchRedditQuery(query, sort, limit, time)
-  return NextResponse.json({ posts: dedupeAndRank(posts) })
+  const { posts, stats } = await fetchRedditQuery(query, sort, limit, time)
+  return NextResponse.json({
+    posts: dedupeAndRank(posts),
+    meta: { query, stats, sourceCount: posts.length },
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -105,19 +133,29 @@ export async function POST(request: NextRequest) {
 
     const cappedQueries = queries.slice(0, 20)
     const allPosts: RedditPost[] = []
+    const fetchStats: FetchStats[] = []
 
     for (let i = 0; i < cappedQueries.length; i += 4) {
       const batch = cappedQueries.slice(i, i + 4)
-      const results = await Promise.all(
+      const results = await Promise.allSettled(
         batch.map((q) => fetchRedditQuery(q, sort, limitPerQuery, time)),
       )
-      for (const posts of results) allPosts.push(...posts)
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue
+        allPosts.push(...result.value.posts)
+        fetchStats.push(...result.value.stats)
+      }
     }
 
     const ranked = dedupeAndRank(allPosts).slice(0, 80)
     return NextResponse.json({
       posts: ranked,
       queriesTried: cappedQueries.length,
+      meta: {
+        rawPosts: allPosts.length,
+        uniquePosts: ranked.length,
+        fetchStats,
+      },
     })
   } catch (error) {
     return NextResponse.json({

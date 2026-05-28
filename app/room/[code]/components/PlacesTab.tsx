@@ -35,7 +35,7 @@ async function fetchRedditFromBrowser(
   budget: string, food: string[], numPeople: number,
   prebuiltQueries?: string[],
   prioritySubreddits?: string[]
-): Promise<any[]> {
+): Promise<{ posts: any[]; meta?: any }> {
   // Use prebuilt queries from DeepSeek, otherwise fallback.
   const queries = prebuiltQueries && prebuiltQueries.length > 0
     ? prebuiltQueries
@@ -57,7 +57,7 @@ async function fetchRedditFromBrowser(
     }),
   })
 
-  if (!res.ok) return []
+  if (!res.ok) return { posts: [] }
   const data = await res.json()
   const allPosts: any[] = (data.posts || [])
     .map((p: any) => ({
@@ -69,20 +69,20 @@ async function fetchRedditFromBrowser(
       numComments: p.numComments || 0,
       priority: getPostPriority(p.subreddit, prioritySubreddits || []),
     }))
-    .filter((p: any) => p.priority >= 0 && p.score >= 3)
+    .filter((p: any) => p.priority >= 0 && p.score >= 1)
 
   if (allPosts.length === 0) {
     const fallbackRes = await fetch(
       `/api/reddit?q=${encodeURIComponent(`${baseCity || region} travel tips`)}&sort=relevance&limit=20&t=year`
     )
-    if (!fallbackRes.ok) return []
+    if (!fallbackRes.ok) return { posts: [] }
     const fallbackData = await fallbackRes.json()
-    return (fallbackData.posts || [])
-      .map((p: any) => ({
+    const fallbackPosts = (fallbackData.posts || []).map((p: any) => ({
         ...p,
         priority: getPostPriority(p.subreddit, prioritySubreddits || []),
       }))
       .filter((p: any) => p.priority >= 0)
+    return { posts: fallbackPosts, meta: fallbackData.meta || { source: 'fallback' } }
   }
 
   // Sort with priority subreddits first, then by score.
@@ -90,7 +90,13 @@ async function fetchRedditFromBrowser(
     if (b.priority !== a.priority) return b.priority - a.priority
     return b.score - a.score
   })
-  return allPosts.slice(0, 50)
+  return {
+    posts: allPosts.slice(0, 50),
+    meta: {
+      ...(data.meta || {}),
+      queriesTried: data.queriesTried || queries.length,
+    },
+  }
 }
 
 import { useState, useEffect } from 'react'
@@ -571,6 +577,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [enriching, setEnriching] = useState(false)
   const [error, setError] = useState('')
+  const [debugLine, setDebugLine] = useState('')
   const sessionId = getSessionId()
 
   const groupActivities = (() => {
@@ -621,7 +628,23 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     // Szuka kolejnej partii i dodaje do istniejących
     const region = countryToRegion(room.country || 'Slovenia')
     let posts: any[] = []
-    try { posts = await fetchRedditFromBrowser(groupActivities, region, room.end_city || 'Ljubljana', null, null, myPrefs.transport, myPrefs.accommodation, myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4, []) } catch {}
+    try {
+      const redditResult = await fetchRedditFromBrowser(
+        groupActivities,
+        region,
+        room.end_city || 'Ljubljana',
+        null,
+        null,
+        myPrefs.transport,
+        myPrefs.accommodation,
+        myPrefs.intensity,
+        myPrefs.budget || 'any',
+        myPrefs.food || [],
+        room.num_people || 4,
+        [],
+      )
+      posts = redditResult.posts || []
+    } catch {}
 
     const tripDaysMore = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
@@ -713,6 +736,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoading(true)
     setEnriching(false)
     setError('')
+    setDebugLine('')
     setAiPlaces([])
     setLocalGems([])
     setResultsVisible(false)
@@ -758,6 +782,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     // Krok 2: Równolegle — Google Places + Reddit posts
     let googlePlaces: any[] = []
     let posts: any[] = []
+    let redditMeta: any = null
     let fetchedBaseLat: number | null = null
     let fetchedBaseLon: number | null = null
 
@@ -785,7 +810,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       } catch {}
     }
     if (redditRes.status === 'fulfilled') {
-      posts = redditRes.value
+      posts = redditRes.value.posts || []
+      redditMeta = redditRes.value.meta || null
       setPostsScanned(posts.length)
     }
 
@@ -835,10 +861,30 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         const enrichData = await enrichRes.json()
         enrichedPlaces = (enrichData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
         newLocalGems = (enrichData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+        const meta = enrichData.meta || {}
+        const usedFallback = !!meta.usedFallback
+        const parseOk = meta.parseOk === true ? 'ok' : 'fail'
+        const aiStatus = meta.deepseekStatus || 0
+        const queryStat = redditMeta?.queriesTried || generatedQueries.length || 0
+        setDebugLine(
+          `Debug: reddit=${posts.length}, google=${googlePlaces.length}, fallback=${usedFallback ? 'tak' : 'nie'}, parse=${parseOk}, aiStatus=${aiStatus}, queries=${queryStat}`
+        )
+        if (usedFallback) {
+          setError('AI nie zwrocilo pelnego opisu. Pokazuje surowe dane z Google i czesciowe wyniki.')
+        }
+      } else {
+        setError('AI enrichment zwrocil blad. Pokazuje dane podstawowe.')
+        setDebugLine(`Debug: /api/places status=${enrichRes.status}, reddit=${posts.length}, google=${googlePlaces.length}`)
       }
       // Fallback — gdy enrichment pusty, pokaż surowe Google places
       if (enrichedPlaces.length === 0 && googlePlaces.length > 0) {
-        enrichedPlaces = googlePlaces.map((p: any) => ({ ...p, tags: p.tags || [] }))
+        enrichedPlaces = googlePlaces.map((p: any) => ({
+          ...p,
+          tags: p.tags || [],
+          description: p.description || 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.',
+          whyThisGroup: p.whyThisGroup || 'Brak dopasowania AI dla grupy.',
+          groupFitNote: p.groupFitNote || 'AI: brak odpowiedzi',
+        }))
       }
 
       // Pokaż wyniki
@@ -897,7 +943,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       })()
 
     } catch (e) {
-      setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
+      setError('Nie udalo sie pobrac rekomendacji. Sprawdz polaczenie.')
+      setDebugLine('Debug: /api/places request failed (network/server).')
       setEnriching(false)
       setLoading(false)
     }
@@ -1028,6 +1075,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
+      {debugLine && (
+        <p className="text-stone-400 text-[11px] bg-stone-900/40 border border-stone-700/40 rounded-xl px-4 py-2">
+          {debugLine}
+        </p>
+      )}
       {!loading && enriching && (
         <p className="text-water-300 text-xs bg-water-900/20 border border-water-800/30 rounded-xl px-4 py-3">
           Miejsca z Google są już widoczne. AI właśnie dogrywa opisy, wskazówki i lokalne perełki.
@@ -1197,4 +1249,3 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     </div>
   )
 }
-

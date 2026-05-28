@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase, Room, UserPreference } from '@/lib/supabase'
+import { Room, UserPreference } from '@/lib/supabase'
 import { getSessionId } from '@/lib/session'
 import { Edit2, Users, BarChart2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -25,10 +25,7 @@ const INTENSITY_MAP: Record<string, string> = {
   slow: '🐢 Spokojne', balanced: '⚖️ Zbalansowane', intense: '🔥 Intensywne',
 }
 const ACCOMMODATION_MAP: Record<string, string> = {
-  tent: '🏕️ Namiot / camping',
-  van: '🚐 Van / kamper',
-  airbnb: '🏠 Airbnb / domki',
-  hotel: '🏨 Hotel / hostel',
+  van_only: '🚐 Tylko van', van_plus: '🏠 Van + noclegi', flexible: '🏨 Elastycznie',
 }
 
 interface Props {
@@ -60,13 +57,9 @@ export default function GroupProfile({ room, myPrefs, allPrefs, onReloadPrefs }:
   const highPriority = aggregated.filter(a => a.pct >= 75)
   const medPriority = aggregated.filter(a => a.pct >= 40 && a.pct < 75)
 
-  async function handleEditPrefs() {
-    const sid = getSessionId()
-    await supabase
-      .from('user_preferences')
-      .update({ completed: false })
-      .eq('room_id', room.id)
-      .eq('session_id', sid)
+  function handleEditPrefs() {
+    // Reset completed status — wróci do dialogu
+    router.refresh()
     window.location.reload()
   }
 

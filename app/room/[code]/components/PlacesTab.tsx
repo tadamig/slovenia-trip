@@ -523,6 +523,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
   const [showAll, setShowAll] = useState(false)
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeSource, setActiveSource] = useState<'google' | 'reddit'>('google')
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const sessionId = getSessionId()
@@ -715,7 +716,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     const [googleRes, redditRes] = await Promise.allSettled([
       fetch('/api/google-places', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queries: googleQueries.slice(0, 10), baseCity: room.end_city || '', country: room.country || '', radius }),
+        body: JSON.stringify({ queries: googleQueries, baseCity: room.end_city || '', country: room.country || '', radius }),
       }),
       fetchRedditFromBrowser(
         groupActivities, region, room.end_city || '',
@@ -728,7 +729,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     if (googleRes.status === 'fulfilled' && googleRes.value.ok) {
       try {
         const gData = await googleRes.value.json()
-        googlePlaces = (gData.places || []).slice(0, 15)
+        googlePlaces = (gData.places || []).slice(0, 25)
         fetchedBaseLat = gData.baseLat
         fetchedBaseLon = gData.baseLon
         if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
@@ -947,8 +948,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         </div>
       )}
 
-      {/* Wyniki */}
-      {!loading && aiPlaces.length > 0 && (
+      {/* Wyniki Google */}
+      {!loading && activeSource === 'google' && aiPlaces.length > 0 && (
         <div className="space-y-4" style={{
           opacity: resultsVisible ? 1 : 0,
           transform: resultsVisible ? 'translateY(0)' : 'translateY(12px)',

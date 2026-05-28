@@ -89,11 +89,21 @@ RULES for queries:
 
 Return ONLY a JSON object, no explanation:
 {
-  "queries": ["query 1", "query 2", ...],
-  "subreddits": ["Slovenia", "travel", "hiking", ...]
+  "googleQueries": ["query 1", ...],
+  "redditQueries": ["query 1", ...],
+  "subreddits": ["Slovenia", "travel", ...]
 }
 
-For subreddits: return 15-20 relevant subreddit names (without r/ prefix) for this specific trip. Mix country-specific, activity-specific, and travel subreddits.`
+googleQueries: 20-25 short search terms for Google Places API (3-8 words each).
+- Mix activity-specific ("SUP rental ${baseCity}", "hiking trail near ${baseCity}") with broad regional ("hidden gem ${country}", "best local food ${baseCity}")
+- Include some in local language (Italian for Italy, Slovenian for Slovenia etc.) for authentic local results
+- Focus on finding specific venues, trails, restaurants, bars
+
+redditQueries: 20 conversational Reddit search queries (3-8 words).
+- More descriptive, like what locals would write
+- Focus on recommendations, hidden gems, off-beaten-path
+
+subreddits: 15-20 relevant subreddit names (without r/ prefix).`
 
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
@@ -112,28 +122,35 @@ For subreddits: return 15-20 relevant subreddit names (without r/ prefix) for th
     })
 
     if (!res.ok) {
-      return NextResponse.json({ queries: getFallbackQueries(activities || [], baseCity, country), subreddits: [] })
+      return NextResponse.json({ queries: getFallbackQueries(activities || [], baseCity, country), googleQueries: getFallbackGoogleQueries(activities || [], baseCity, country), subreddits: [] })
     }
 
     const data = await res.json()
     const raw = data.choices?.[0]?.message?.content || '{}'
 
-    let queries: string[] = []
+    let googleQueries: string[] = []
+    let redditQueries: string[] = []
     let subreddits: string[] = []
     try {
       const clean = raw.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(clean)
       if (Array.isArray(parsed)) {
-        queries = parsed
+        redditQueries = parsed
       } else {
-        queries = parsed.queries || []
+        googleQueries = parsed.googleQueries || parsed.queries || []
+        redditQueries = parsed.redditQueries || parsed.queries || []
         subreddits = parsed.subreddits || []
       }
     } catch {
-      queries = getFallbackQueries(activities || [], baseCity, country)
+      redditQueries = getFallbackQueries(activities || [], baseCity, country)
+      googleQueries = getFallbackGoogleQueries(activities || [], baseCity, country)
     }
 
-    return NextResponse.json({ queries: queries.slice(0, 20), subreddits })
+    return NextResponse.json({
+      queries: redditQueries.slice(0, 20),
+      googleQueries: googleQueries.slice(0, 25),
+      subreddits
+    })
   } catch (err) {
     return NextResponse.json({ queries: [], subreddits: [], error: String(err) })
   }
@@ -155,5 +172,21 @@ function getFallbackQueries(activities: string[], baseCity: string, country: str
   if (activities.includes('relax')) base.push(`${country} thermal spa`, `${baseCity} relaxing spot`)
   if (activities.includes('nightlife')) base.push(`${baseCity} bar nightlife`, `${baseCity} craft beer`)
   if (activities.includes('photo')) base.push(`${country} photography spot`, `${baseCity} viewpoint`)
+  return base
+}
+
+function getFallbackGoogleQueries(activities: string[], baseCity: string, country: string): string[] {
+  const base: string[] = [
+    `things to do ${baseCity}`,
+    `tourist attraction ${baseCity}`,
+    `best restaurant ${baseCity}`,
+    `${baseCity} hiking`,
+    `${country} hidden gem`,
+  ]
+  if (activities.includes('sup')) base.push(`SUP rental ${baseCity}`, `kayak ${baseCity}`)
+  if (activities.includes('trekking')) base.push(`hiking trail ${baseCity}`, `nature walk ${baseCity}`)
+  if (activities.includes('food')) base.push(`local restaurant ${baseCity}`, `trattoria ${baseCity}`)
+  if (activities.includes('nightlife')) base.push(`bar ${baseCity}`, `aperitivo ${baseCity}`)
+  if (activities.includes('cycling')) base.push(`bike rental ${baseCity}`, `cycling route ${baseCity}`)
   return base
 }

@@ -107,16 +107,17 @@ interface Props {
 
 interface AIPlace {
   name: string
-  description: string
-  whyThisGroup: string
+  description?: string
+  whyThisGroup?: string
   tags: string[]
-  region: 'budapest' | 'slovenia'
-  subregion: string
+  region?: string
+  subregion?: string
   lat?: number
   lon?: number
-  estimatedCost: 'free' | 'cheap' | 'moderate' | 'expensive'
-  sourceCount: number
-  sentiment: string
+  estimatedCost?: 'free' | 'cheap' | 'moderate' | 'expensive'
+  priceLevel?: number
+  sourceCount?: number
+  sentiment?: string
   distanceFromBase?: number
   localityScore?: number
   authenticityNote?: string
@@ -127,7 +128,11 @@ interface AIPlace {
   googlePlaceId?: string
   isOpen?: boolean | null
   googleAddress?: string
-  sources: { title: string; url: string; score: number; subreddit: string }[]
+  address?: string
+  website?: string
+  source?: 'google' | 'reddit' // skąd pochodzi
+  redditSources?: { title: string; url: string; score: number; subreddit: string }[]
+  sources?: { title: string; url: string; score: number; subreddit: string }[]
 }
 
 const ACTIVITY_TAGS: Record<string, string> = {
@@ -446,9 +451,9 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
       </div>
 
       {/* Reddit sources */}
-      {showSources && place.sources?.length > 0 && (
+      {showSources && (place.sources || []).length > 0 && (
         <div className="space-y-1.5 border-t border-stone-700/40 pt-2">
-          {place.sources.map((s, i) => (
+          {(place.sources || []).map((s, i) => (
             <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2 text-xs text-water-400 hover:text-water-300 transition-colors">
               <ExternalLink className="w-3 h-3 flex-shrink-0" />
@@ -505,6 +510,9 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
 // ——— GŁÓWNY KOMPONENT ———
 export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
+  const [localGems, setLocalGems] = useState<AIPlace[]>([])
+  const [baseLat, setBaseLat] = useState<number | null>(null)
+  const [baseLon, setBaseLon] = useState<number | null>(null)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
   const [loading, setLoading] = useState(false)
   const [searchCount, setSearchCount] = useState(0)
@@ -641,6 +649,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoading(true)
     setError('')
     setAiPlaces([])
+    setLocalGems([])
     setResultsVisible(false)
     setScanPhase(0)
     setPostsScanned(0)

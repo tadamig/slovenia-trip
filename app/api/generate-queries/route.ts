@@ -78,13 +78,14 @@ TRIP PROFILE:
 - ${foodContext}
 
 RULES for queries:
+- For EACH activity in the profile, generate at least 2-3 queries specifically targeting that activity in ${baseCity} or ${country}
 - Mix broad country queries ("${country} hidden gem") with specific city queries ("${baseCity} local tip")
 - Include seasonal context where relevant (${monthName} activities in ${country})
 - Include budget context if budget matters
 - Focus on authentic, local, off-beaten-path experiences
 - Include queries that locals would write, not tourist brochure language
 - Do NOT use quotation marks in queries
-- Each query should be 3-6 words max
+- Each query should be 3-8 words max
 
 Return ONLY a JSON object, no explanation:
 {

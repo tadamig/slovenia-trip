@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { getSessionId, getSessionName } from '@/lib/session'
+import { getSessionId, getSessionName, saveRoomToHistory, setSessionId } from '@/lib/session'
 import { Room, UserPreference } from '@/lib/supabase'
 import DialogFlow from './components/DialogFlow'
 import AppShell from './components/AppShell'
@@ -41,9 +41,11 @@ export default function RoomPage() {
         return
       }
       setRoom(roomData)
+      // Zapisz pokój do historii
+      saveRoomToHistory(roomData.code, roomData.trip_name, getSessionName())
 
       // Pobierz preferencje tego użytkownika
-      const sid = getSessionId()
+      let sid = getSessionId()
       const { data: myPrefsData } = await supabase
         .from('user_preferences')
         .select('*')
@@ -51,7 +53,39 @@ export default function RoomPage() {
         .eq('session_id', sid)
         .single()
 
-      setMyPrefs(myPrefsData || null)
+      // Jeśli nie ma preferencji — spróbuj znaleźć po imieniu i przywróć session_id
+      if (!myPrefsData) {
+        const name = getSessionName()
+        if (name && name !== 'Nieznajomy') {
+          const { data: byName } = await supabase
+            .from('user_preferences')
+            .select('session_id')
+            .eq('room_id', roomData.id)
+            .eq('user_name', name)
+            .single()
+
+          if (byName?.session_id) {
+            setSessionId(byName.session_id)
+            sid = byName.session_id
+
+            // Pobierz preferencje pod nowym session_id
+            const { data: restored } = await supabase
+              .from('user_preferences')
+              .select('*')
+              .eq('room_id', roomData.id)
+              .eq('session_id', sid)
+              .single()
+
+            setMyPrefs(restored || null)
+          } else {
+            setMyPrefs(null)
+          }
+        } else {
+          setMyPrefs(null)
+        }
+      } else {
+        setMyPrefs(myPrefsData)
+      }
 
       // Pobierz wszystkie preferencje w pokoju
       const { data: allPrefsData } = await supabase

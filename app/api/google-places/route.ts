@@ -1,144 +1,232 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY
+export const maxDuration = 60
 
-// Haversine — odległość w km między dwoma punktami
-function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+const REGION_TO_COUNTRY: Record<string, string> = {
+  slovenia: 'Slovenia', budapest: 'Hungary', croatia: 'Croatia',
+  austria: 'Austria', italy: 'Italy', czechia: 'Czech Republic',
+  poland: 'Poland', germany: 'Germany', france: 'France', spain: 'Spain',
 }
 
-// Mapowanie Google types na nasze tagi
-function googleTypesToTags(types: string[]): string[] {
-  const tags: string[] = []
-  const typeSet = types
-  const t = { has: (v: string) => typeSet.includes(v) }
-  if (t.has('restaurant') || t.has('cafe') || t.has('bakery') || t.has('bar') || t.has('food')) tags.push('food')
-  if (t.has('night_club') || t.has('bar')) tags.push('nightlife')
-  if (t.has('museum') || t.has('tourist_attraction') || t.has('church') || t.has('art_gallery')) tags.push('sightseeing')
-  if (t.has('park') || t.has('natural_feature') || t.has('campground')) tags.push('trekking')
-  if (t.has('spa')) tags.push('relax')
-  if (t.has('locality') || t.has('neighborhood') || t.has('political')) tags.push('sightseeing')
-  if (tags.length === 0) tags.push('sightseeing') // fallback
-  return Array.from(new Set(tags))
+const transportLabels: Record<string, string> = {
+  van: 'van/kamper', own_car: 'własny samochód', rental: 'wynajem auta', motorcycle: 'motocykl'
 }
-
-async function searchGooglePlaces(query: string, lat: number, lon: number, radius: number): Promise<any[]> {
-  if (!GOOGLE_API_KEY) return []
-
-  try {
-    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&location=${lat},${lon}&radius=${radius * 1000}&key=${GOOGLE_API_KEY}&language=en`
-    const res = await fetch(url)
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.results || []
-  } catch {
-    return []
-  }
+const accommodationLabels: Record<string, string> = {
+  tent: 'namiot/camping', van: 'van/kamper', airbnb: 'Airbnb/domki', hotel: 'hotel/hostel'
 }
-
-async function geocodeCity(city: string, country: string): Promise<{ lat: number; lon: number } | null> {
-  if (!GOOGLE_API_KEY) return null
-  try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${city}, ${country}`)}&key=${GOOGLE_API_KEY}`
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const data = await res.json()
-    const loc = data.results?.[0]?.geometry?.location
-    if (!loc) return null
-    return { lat: loc.lat, lon: loc.lng }
-  } catch {
-    return null
-  }
-}
-
-async function getPlaceDetails(placeId: string): Promise<any> {
-  if (!GOOGLE_API_KEY) return {}
-  try {
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=opening_hours,price_level,formatted_phone_number,website&key=${GOOGLE_API_KEY}`
-    const res = await fetch(url)
-    if (!res.ok) return {}
-    const data = await res.json()
-    return data.result || {}
-  } catch {
-    return {}
-  }
+const intensityLabels: Record<string, string> = {
+  slow: 'spokojne tempo', balanced: 'zbalansowane', intense: 'intensywne'
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { queries = [], baseCity, country, baseLat, baseLon, radius = 50 } = await request.json()
+    const body = await request.json()
+    const {
+      posts = [],
+      activities = [],
+      region,
+      baseCity,
+      transport,
+      accommodation,
+      intensity,
+      numPeople,
+      startDate,
+      endDate,
+      tripDays,
+      batch = 1,
+      googlePlaces = [],
+    } = body
 
-    if (!queries.length) return NextResponse.json({ places: [] })
-    if (!GOOGLE_API_KEY) return NextResponse.json({ places: [], error: 'No API key' })
-
-    // Geocoduj bazę jeśli nie ma koordynatów
-    let lat = baseLat
-    let lon = baseLon
-    if (!lat || !lon) {
-      const coords = await geocodeCity(baseCity, country)
-      if (coords) { lat = coords.lat; lon = coords.lon }
-      else return NextResponse.json({ places: [] })
+    if (!region || !baseCity) {
+      return NextResponse.json({ places: [], postsAnalyzed: 0, error: 'Missing region or baseCity' })
+    }
+    if (posts.length === 0 && googlePlaces.length === 0) {
+      return NextResponse.json({ places: [], postsAnalyzed: 0 })
     }
 
-    // Szukaj równolegle dla wszystkich zapytań
-    const allResults = await Promise.all(
-      queries.map((q: string) => searchGooglePlaces(q, lat, lon, radius))
-    )
+    const country = REGION_TO_COUNTRY[region] || region
+    const daysInfo = tripDays ? `${tripDays} dni` : 'nieznana liczba dni'
+    const hasGooglePlaces = googlePlaces.length > 0
 
-    // Deduplikuj po placeId i zbierz
-    const seenIds = new Set<string>()
-    const places: any[] = []
+    const profileLines = [
+      `- Liczba osób: ${numPeople || 4}`,
+      `- Transport: ${transportLabels[transport] || transport || 'samochód'}`,
+      `- Nocleg: ${accommodationLabels[accommodation] || accommodation || 'różny'}`,
+      `- Tempo: ${intensityLabels[intensity] || intensity || 'zbalansowane'}`,
+      `- Aktywności: ${activities.join(', ') || 'ogólne zwiedzanie'}`,
+      `- Czas trwania: ${daysInfo}`,
+      `- Baza noclegowa: ${baseCity}, ${country}`,
+    ].join('\n')
 
-    for (const results of allResults) {
-      for (const r of results) {
-        if (!r.place_id || seenIds.has(r.place_id)) continue
-        seenIds.add(r.place_id)
+    const postLines = posts
+      .map((p: any, i: number) => `[${i + 1}] r/${p.subreddit} | ${p.score}pkt | "${p.title}"${p.text ? '\n' + p.text.slice(0, 200) : ''}`)
+      .join('\n\n')
 
-        const placeLat = r.geometry?.location?.lat
-        const placeLon = r.geometry?.location?.lng
-        if (!placeLat || !placeLon) continue
+    let prompt: string
 
-        const distance = Math.round(distanceKm(lat, lon, placeLat, placeLon))
-        if (distance > radius * 1.5) continue // odrzuć zbyt odległe
+    if (hasGooglePlaces) {
+      const googleLines = googlePlaces
+        .map((p: any, i: number) => `[G${i + 1}] ${p.name} | ${p.address || ''} | typy: ${(p.types || []).slice(0, 3).join(', ')}`)
+        .join('\n')
 
-        places.push({
-          name: r.name,
-          googlePlaceId: r.place_id,
-          lat: placeLat,
-          lon: placeLon,
-          googleRating: r.rating,
-          googleTotalRatings: r.user_ratings_total,
-          address: r.formatted_address,
-          types: r.types || [],
-          tags: googleTypesToTags(r.types || []),
-          distanceFromBase: distance,
-          priceLevel: r.price_level,
-          verified: true,
-          source: 'google',
-          isOpen: r.opening_hours?.open_now ?? null,
-        })
-      }
+      prompt = `Jesteś ekspertem od podróży. Masz dwa zadania naraz.
+
+PROFIL EKIPY:
+${profileLines}
+
+ZADANIE 1 — Wzbogać miejsca z Google:
+Dla każdego miejsca napisz opis i tagi dopasowane do profilu ekipy.
+${googleLines}
+
+ZADANIE 2 — Znajdź lokalne perełki z Reddit których NIE MA na liście Google:
+${postLines}
+
+Zwróć JSON:
+{
+  "enriched": [
+    {
+      "googleIndex": 0,
+      "description": "2-3 zdania co to jest i dlaczego warto",
+      "whyThisGroup": "1 zdanie dlaczego pasuje tej ekipie",
+      "tags": ["sup", "food"],
+      "estimatedCost": "free|cheap|moderate|expensive",
+      "sourceCount": 2,
+      "sourcePosts": [1, 3],
+      "sentiment": "pozytywny",
+      "authenticityNote": "notatka"
+    }
+  ],
+  "localGems": [
+    {
+      "name": "Nazwa miejsca",
+      "description": "2-3 zdania",
+      "whyThisGroup": "1 zdanie",
+      "tags": ["trekking"],
+      "country": "${country}",
+      "subregion": "okolica",
+      "estimatedCost": "free|cheap|moderate|expensive",
+      "sourceCount": 1,
+      "sourcePosts": [2],
+      "sentiment": "pozytywny"
+    }
+  ]
+}`
+    } else {
+      const batchNote = batch === 2
+        ? '\nTo DRUGA PARTIA — skup się na ukrytych perełkach, lokalnych restauracjach, nieoczywistych szlakach.'
+        : '\nTo PIERWSZA PARTIA — zwróć najbardziej wartościowe i polecane miejsca.'
+
+      prompt = `Jesteś ekspertem od podróży. Analizujesz posty z Reddit i wyciągasz KONKRETNE miejsca warte odwiedzenia.${batchNote}
+
+PROFIL EKIPY:
+${profileLines}
+- Region: ${country}, okolice ${baseCity} (max 100km)
+
+WAŻNE ZASADY:
+- Szukaj miejsc w promieniu ~100km od ${baseCity} ORAZ w całym regionie ${country}
+- Priorytet dla miejsc które pojawiają się w WIELU postach
+- Każde miejsce MUSI mieć dokładne współrzędne GPS
+
+POSTY Z REDDIT (${posts.length} postów):
+${postLines}
+
+Zwróć JSON (dokładnie 10 miejsc):
+{
+  "places": [
+    {
+      "name": "Nazwa miejsca",
+      "description": "2-3 zdania dlaczego warto i co to jest",
+      "whyThisGroup": "1 zdanie dlaczego pasuje tej konkretnej ekipie",
+      "tags": ["sup", "food"],
+      "region": "${region}",
+      "subregion": "Como",
+      "country": "${country}",
+      "lat": 46.3683,
+      "lon": 14.1146,
+      "distanceFromBase": 45,
+      "estimatedCost": "free|cheap|moderate|expensive",
+      "sourceCount": 3,
+      "sourcePosts": [1, 3, 5],
+      "sentiment": "pozytywny",
+      "localityScore": 8,
+      "authenticityNote": "polecane głównie przez lokalnych mieszkańców"
+    }
+  ]
+}`
     }
 
-    // Posortuj po odległości
-    places.sort((a, b) => a.distanceFromBase - b.distanceFromBase)
+    const deepseekRes = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 4000,
+        messages: [
+          { role: 'system', content: 'Jesteś ekspertem od podróży. Zawsze odpowiadasz TYLKO w formacie JSON, bez żadnego tekstu przed ani po. Wszystkie opisy ZAWSZE po polsku.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    })
 
-    // Pobierz szczegóły dla pierwszych 15 (godziny, strona, telefon)
-    const top = places.slice(0, 15)
-    await Promise.all(top.map(async (p) => {
-      const details = await getPlaceDetails(p.googlePlaceId)
-      if (details.opening_hours?.open_now !== undefined) p.isOpen = details.opening_hours.open_now
-      if (details.price_level !== undefined) p.priceLevel = details.price_level
-      if (details.rating !== undefined) p.googleRating = details.rating
-      if (details.website) p.website = details.website
+    if (!deepseekRes.ok) {
+      return NextResponse.json({ places: [], postsAnalyzed: posts.length, error: 'DeepSeek error' })
+    }
+
+    const deepseekData = await deepseekRes.json()
+    const rawText = deepseekData.choices?.[0]?.message?.content || '{}'
+
+    let parsed: any = { places: [], enriched: [], localGems: [] }
+    try {
+      const clean = rawText.replace(/```json|```/g, '').trim()
+      parsed = JSON.parse(clean)
+    } catch {}
+
+    if (hasGooglePlaces) {
+      const enrichedPlaces = (parsed.enriched || []).map((e: any) => {
+        const gPlace = googlePlaces[e.googleIndex]
+        if (!gPlace) return null
+        return {
+          ...gPlace,
+          description: e.description,
+          whyThisGroup: e.whyThisGroup,
+          tags: e.tags || gPlace.tags || [],
+          estimatedCost: e.estimatedCost,
+          sourceCount: e.sourceCount || 0,
+          sentiment: e.sentiment,
+          authenticityNote: e.authenticityNote,
+          sources: (e.sourcePosts || [])
+            .map((i: number) => posts[i - 1])
+            .filter(Boolean)
+            .map((p: any) => ({ title: p.title, url: p.url, score: p.score, subreddit: p.subreddit })),
+        }
+      }).filter(Boolean)
+
+      const localGems = (parsed.localGems || []).map((place: any) => ({
+        ...place,
+        tags: place.tags || [],
+        source: 'reddit',
+        sources: (place.sourcePosts || [])
+          .map((i: number) => posts[i - 1])
+          .filter(Boolean)
+          .map((p: any) => ({ title: p.title, url: p.url, score: p.score, subreddit: p.subreddit })),
+      }))
+
+      return NextResponse.json({ places: enrichedPlaces, localGems, postsAnalyzed: posts.length })
+    }
+
+    const places = (parsed.places || []).map((place: any) => ({
+      ...place,
+      sources: (place.sourcePosts || [])
+        .map((i: number) => posts[i - 1])
+        .filter(Boolean)
+        .map((p: any) => ({ title: p.title, url: p.url, score: p.score, subreddit: p.subreddit })),
     }))
 
-    return NextResponse.json({ places, baseLat: lat, baseLon: lon })
+    return NextResponse.json({ places, postsAnalyzed: posts.length })
   } catch (err) {
-    return NextResponse.json({ places: [], error: String(err) })
+    return NextResponse.json({ places: [], postsAnalyzed: 0, error: String(err) })
   }
 }

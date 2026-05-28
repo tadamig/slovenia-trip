@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Room, UserPreference } from '@/lib/supabase'
+import CityAutocomplete from './CityAutocomplete'
 import { getSessionName, setSessionName } from '@/lib/session'
 import { ChevronRight, ChevronLeft, Check, Users, Compass } from 'lucide-react'
 
@@ -35,9 +36,23 @@ const INTENSITY = [
 ]
 
 const ACCOMMODATION = [
-  { id: 'van_only', emoji: '🚐', label: 'Tylko van' },
-  { id: 'van_plus', emoji: '🏠', label: 'Van + noclegi' },
-  { id: 'flexible', emoji: '🏨', label: 'Elastycznie' },
+  { id: 'tent', emoji: '🏕️', label: 'Namiot / camping' },
+  { id: 'van', emoji: '🚐', label: 'Van / kamper' },
+  { id: 'airbnb', emoji: '🏠', label: 'Airbnb / domki' },
+  { id: 'hotel', emoji: '🏨', label: 'Hotel / hostel' },
+]
+
+const TRANSPORT = [
+  { id: 'van', emoji: '🚐', label: 'Van / kamper' },
+  { id: 'own_car', emoji: '🚗', label: 'Własny samochód' },
+  { id: 'rental', emoji: '🚙', label: 'Wynajem auta' },
+  { id: 'motorcycle', emoji: '🏍️', label: 'Motocykl' },
+]
+
+const BUDGET = [
+  { id: 'budget', emoji: '💸', label: 'Tani', desc: 'Street food, bary, kampingi' },
+  { id: 'mid', emoji: '💰', label: 'Średni', desc: 'Lokalne restauracje, Airbnb' },
+  { id: 'any', emoji: '🎯', label: 'Budżet nieważny', desc: 'Nie bierzemy pod uwagę' },
 ]
 
 const FOOD = [
@@ -47,7 +62,7 @@ const FOOD = [
   { id: 'anything', label: '🍖 Wszystko — cokolwiek lokalnego' },
 ]
 
-const STEP_COUNT = 5
+const STEP_COUNT = 6
 
 function GroupPreview({ allPrefs }: { allPrefs: UserPreference[] }) {
   if (allPrefs.length === 0) return null
@@ -73,9 +88,14 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
   const [intensity, setIntensity] = useState<string>(existingPrefs?.intensity || '')
   const [accommodation, setAccommodation] = useState<string>(existingPrefs?.accommodation || '')
   const [food, setFood] = useState<string[]>(existingPrefs?.food || [])
+  const [transport, setTransport] = useState<string>(room.transport || '')
+  const [budget, setBudget] = useState<string>('any')
+  const [endDate, setEndDate] = useState(room.end_date || '')
   const [startDate, setStartDate] = useState(room.start_date || '')
   const [startCity, setStartCity] = useState(room.start_city || '')
-  const [endCity, setEndCity] = useState(room.end_city || 'Ljubljana')
+  const [startCityCountry, setStartCityCountry] = useState(room.start_city_country || '')
+  const [endCity, setEndCity] = useState(room.end_city || '')
+  const [endCityCountry, setEndCityCountry] = useState(room.country || '')
   const [userName, setUserNameLocal] = useState(getSessionName() !== 'Nieznajomy' ? getSessionName() : '')
   const [saving, setSaving] = useState(false)
 
@@ -96,7 +116,8 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
     if (step === 1) return activities.length > 0
     if (step === 2) return intensity !== ''
     if (step === 3) return accommodation !== ''
-    if (step === 4) return food.length > 0
+    if (step === 4) return transport !== ''
+    if (step === 5) return food.length > 0
     return true
   }
 
@@ -105,8 +126,8 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
     setSaving(true)
     if (userName.trim()) setSessionName(userName.trim())
     await onComplete(
-      { activities, intensity: intensity as any, accommodation: accommodation as any, food },
-      { start_date: startDate || undefined, start_city: startCity, end_city: endCity }
+      { activities, intensity: intensity as any, accommodation: accommodation as any, food, transport, budget },
+      { start_date: startDate || undefined, end_date: endDate || undefined, start_city: startCity, end_city: endCity, transport, country: endCityCountry, start_city_country: startCityCountry }
     )
     setSaving(false)
   }
@@ -280,15 +301,75 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
             </div>
           )}
 
-          {/* KROK 4 — Jedzenie */}
+          {/* KROK 4 — Transport */}
           {step === 4 && (
             <div className="space-y-5">
               <div>
                 <h2 className="font-display text-2xl font-bold text-stone-50 mb-1">
-                  Jak z jedzeniem?
+                  Czym jedziecie?
                 </h2>
-                <p className="text-stone-500 text-xs">Możesz wybrać kilka opcji.</p>
+                <p className="text-stone-500 text-xs">Środek transportu wpływa na dostępność miejsc i sprzętu.</p>
               </div>
+              <div className="space-y-2.5">
+                {TRANSPORT.map(opt => {
+                  const selected = transport === opt.id
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => setTransport(opt.id)}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border text-left transition-all duration-150 active:scale-[0.98] ${
+                        selected
+                          ? 'bg-water-600/15 border-water-500 text-water-300'
+                          : 'bg-stone-800/60 border-stone-700 text-stone-400 hover:border-stone-600'
+                      }`}
+                    >
+                      <span className="text-3xl">{opt.emoji}</span>
+                      <span className="font-medium text-sm">{opt.label}</span>
+                      {selected && <Check className="w-4 h-4 text-water-400 ml-auto" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* KROK 5 — Jedzenie */}
+          {step === 5 && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="font-display text-2xl font-bold text-stone-50 mb-1">
+                  Jedzenie & budżet
+                </h2>
+                <p className="text-stone-500 text-xs">Możesz wybrać kilka opcji jedzenia.</p>
+              </div>
+
+              {/* Budżet */}
+              <div>
+                <p className="text-xs text-stone-500 font-medium mb-2">💰 Budżet podróży</p>
+                <div className="flex gap-2">
+                  {BUDGET.map(opt => {
+                    const selected = budget === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => setBudget(opt.id)}
+                        className={`flex-1 flex flex-col items-center px-2 py-3 rounded-xl border text-center transition-all duration-150 active:scale-[0.98] ${
+                          selected
+                            ? 'bg-sand-600/15 border-sand-500 text-sand-300'
+                            : 'bg-stone-800/60 border-stone-700 text-stone-400 hover:border-stone-600'
+                        }`}
+                      >
+                        <span className="text-xl mb-1">{opt.emoji}</span>
+                        <span className="font-medium text-xs">{opt.label}</span>
+                        <span className="text-stone-600 text-xs mt-0.5 leading-tight">{opt.desc}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="h-px bg-stone-800" />
+              <p className="text-xs text-stone-500 font-medium">🍽️ Preferencje jedzenia</p>
               <div className="space-y-2">
                 {FOOD.map(opt => {
                   const selected = food.includes(opt.id)
@@ -312,7 +393,7 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
           )}
 
           {/* KROK 5 — Data i trasa */}
-          {step === 5 && (
+          {step === 6 && (
             <div className="space-y-5">
               <div>
                 <h2 className="font-display text-2xl font-bold text-stone-50 mb-1">
@@ -321,35 +402,39 @@ export default function DialogFlow({ room, existingPrefs, allPrefs, onComplete }
                 <p className="text-stone-500 text-xs">Ostatni krok — data i logistyka trasy.</p>
               </div>
               <div className="space-y-4">
-                <div>
-                  <label className="text-xs text-stone-500 font-medium block mb-1.5">Data wyjazdu</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 focus:outline-none focus:border-forest-500 transition-colors text-sm"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-stone-500 font-medium block mb-1.5">Data wyjazdu</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                      className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 focus:outline-none focus:border-forest-500 transition-colors text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-stone-500 font-medium block mb-1.5">Data powrotu</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={e => setEndDate(e.target.value)}
+                      min={startDate}
+                      className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 focus:outline-none focus:border-forest-500 transition-colors text-sm"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="text-xs text-stone-500 font-medium block mb-1.5">Miasto startowe</label>
-                  <input
-                    type="text"
-                    value={startCity}
-                    onChange={e => setStartCity(e.target.value)}
-                    placeholder="np. Kraków, Warszawa, Wrocław..."
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 transition-colors text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-stone-500 font-medium block mb-1.5">Docelowe miasto / region końcowy</label>
-                  <input
-                    type="text"
-                    value={endCity}
-                    onChange={e => setEndCity(e.target.value)}
-                    placeholder="np. Ljubljana, Bled, Triglav..."
-                    className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3.5 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 transition-colors text-sm"
-                  />
-                </div>
+                <CityAutocomplete
+                  value={startCity}
+                  onChange={(city, country) => { setStartCity(city); setStartCityCountry(country) }}
+                  label="Miasto startowe"
+                  placeholder="np. Kraków, Warszawa, Wrocław..."
+                />
+                <CityAutocomplete
+                  value={endCity}
+                  onChange={(city, country) => { setEndCity(city); setEndCityCountry(country) }}
+                  label="Miasto docelowe / baza noclegowa"
+                  placeholder="np. Ljubljana, Split, Budva..."
+                />
               </div>
 
               {/* Podsumowanie preferencji */}

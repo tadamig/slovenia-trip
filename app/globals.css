@@ -45,3 +45,6 @@ body {
 .delay-400 { animation-delay: 400ms; }
 .delay-500 { animation-delay: 500ms; }
 .opacity-0-init { opacity: 0; }
+
+/* Leaflet CSS inline to avoid SSR import issues */
+@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');

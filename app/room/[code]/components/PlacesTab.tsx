@@ -617,6 +617,23 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoadingMore(false)
   }
 
+  function getRadius(city: string, country: string): number {
+    const c = (city + country).toLowerCase()
+    if (c.includes('lake') || c.includes('lago') || c.includes('jezioro') ||
+        c.includes('slovenia') || c.includes('croatia') || c.includes('hungary')) return 80
+    return 40
+  }
+
+  function isAlreadyInGoogle(name: string, googlePlaces: AIPlace[]): AIPlace | null {
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const n = normalize(name)
+    return googlePlaces.find(p => {
+      const pn = normalize(p.name)
+      return pn === n || pn.includes(n) || n.includes(pn) ||
+        (n.length > 5 && pn.length > 5 && (pn.includes(n.slice(0, 6)) || n.includes(pn.slice(0, 6))))
+    }) || null
+  }
+
   async function verifyAndMerge(places: AIPlace[], region: string): Promise<AIPlace[]> {
     try {
       const verifyRes = await fetch('/api/verify', {
@@ -656,145 +673,152 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setSearchCount(c => c + 1)
 
     const region = countryToRegion(room.country || 'Slovenia')
+    const radius = getRadius(room.end_city || '', room.country || '')
     const tripDaysCalc = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
     const monthCalc = room.start_date ? new Date(room.start_date).getMonth() + 1 : null
 
-    // Krok 1: DeepSeek generuje zapytania Reddit
+    const queryPayload = {
+      activities: groupActivities,
+      baseCity: room.end_city || '',
+      region,
+      transport: myPrefs.transport,
+      accommodation: myPrefs.accommodation,
+      intensity: myPrefs.intensity,
+      numPeople: room.num_people || 4,
+      budget: myPrefs.budget || 'any',
+      food: myPrefs.food || [],
+      tripDays: tripDaysCalc,
+      month: monthCalc,
+    }
+
+    // Krok 1: Dwa równoległe DeepSeek calls
     setScanPhase(0)
+    let googleQueries: string[] = []
     let generatedQueries: string[] = []
     let generatedSubreddits: string[] = []
-    try {
-      const qRes = await fetch('/api/generate-queries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          activities: groupActivities,
-          baseCity: room.end_city || 'Ljubljana',
-          region,
-          transport: myPrefs.transport,
-          accommodation: myPrefs.accommodation,
-          intensity: myPrefs.intensity,
-          numPeople: room.num_people || 4,
-          budget: myPrefs.budget || 'any',
-          food: myPrefs.food || [],
-          tripDays: tripDaysCalc,
-          month: monthCalc,
-        }),
-      })
-      if (qRes.ok) {
-        const qData = await qRes.json()
-        generatedQueries = qData.queries || []
-        generatedSubreddits = qData.subreddits || []
-      }
-    } catch {}
+
+    const [gqRes, rqRes] = await Promise.allSettled([
+      fetch('/api/generate-google-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
+      fetch('/api/generate-reddit-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
+    ])
+
+    if (gqRes.status === 'fulfilled' && gqRes.value.ok) {
+      try { const d = await gqRes.value.json(); googleQueries = d.queries || [] } catch {}
+    }
+    if (rqRes.status === 'fulfilled' && rqRes.value.ok) {
+      try { const d = await rqRes.value.json(); generatedQueries = d.queries || []; generatedSubreddits = d.subreddits || [] } catch {}
+    }
 
     setScanPhase(1)
 
-    // Krok 2: Przeglądarka pobiera posty z Reddit
+    // Krok 2: Równolegle — Google Places + Reddit fetch
+    let allGooglePlaces: AIPlace[] = []
     let posts: any[] = []
-    try {
-      posts = await fetchRedditFromBrowser(
-        groupActivities, region, room.end_city || 'Ljubljana',
+    let fetchedBaseLat: number | null = null
+    let fetchedBaseLon: number | null = null
+
+    const [googleRes, redditPosts] = await Promise.allSettled([
+      fetch('/api/google-places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queries: googleQueries.slice(0, 10), baseCity: room.end_city || '', country: room.country || '', radius }),
+      }),
+      fetchRedditFromBrowser(
+        groupActivities, region, room.end_city || '',
         tripDaysCalc, monthCalc,
         myPrefs.transport, myPrefs.accommodation, myPrefs.intensity,
         myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4,
         generatedQueries, generatedSubreddits
-      )
-      setPostsScanned(posts.length)
-    } catch {}
+      ),
+    ])
 
-
-    const payload = {
-      posts,
-      activities: groupActivities,
-      region,
-      baseCity: room.end_city || 'Ljubljana',
-      transport: myPrefs.transport || myPrefs.accommodation,
-      accommodation: myPrefs.accommodation,
-      intensity: myPrefs.intensity,
-      numPeople: room.num_people || 4,
-      startDate: room.start_date,
-      endDate: room.end_date,
-      tripDays: tripDaysCalc,
+    if (googleRes.status === 'fulfilled' && googleRes.value.ok) {
+      try {
+        const gData = await googleRes.value.json()
+        allGooglePlaces = (gData.places || []).slice(0, 10)
+        fetchedBaseLat = gData.baseLat
+        fetchedBaseLon = gData.baseLon
+        if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
+        if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
+      } catch {}
     }
 
-    try {
-      setScanPhase(2)
-      const res1 = await fetch('/api/places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, batch: 1 }),
-      })
-      if (!res1.ok) throw new Error('Błąd API')
-      const data1 = await res1.json()
-      setScanPhase(3)
+    if (redditPosts.status === 'fulfilled') {
+      posts = redditPosts.value
+      setPostsScanned(posts.length)
+    }
 
-      // Pokaż pierwsze wyniki od razu (bez czekania na verify)
-      let firstBatch = (data1.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-      setFadingOut(true)
-      await new Promise(r => setTimeout(r, 400))
-      setAiPlaces(firstBatch)
-      setLoading(false)
-      setFadingOut(false)
-      await new Promise(r => setTimeout(r, 50))
-      setResultsVisible(true)
+    setScanPhase(2)
 
-      // Weryfikacja batch 1 + kolejne batche — wszystko w tle
-      let allPlaces = [...firstBatch]
+    // Pokazuj Google Places od razu
+    setFadingOut(true)
+    await new Promise(r => setTimeout(r, 400))
+    setAiPlaces(allGooglePlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
+    setLoading(false)
+    setFadingOut(false)
+    await new Promise(r => setTimeout(r, 50))
+    setResultsVisible(true)
 
-      // Weryfikuj batch 1 w tle i aktualizuj badge'i + zapisz
-      verifyAndMerge(firstBatch, region).then(async verified => {
-        allPlaces = verified
-        setAiPlaces(verified)
-        await saveRecommendations(verified, posts.length)
-      })
+    // Krok 3: Więcej Google Places w tle
+    const remainingGoogleBatches: string[][] = []
+    for (let i = 10; i < googleQueries.length; i += 8) remainingGoogleBatches.push(googleQueries.slice(i, i + 8))
 
-      // Batch 2, 3, 4 — w tle, dodawaj sukcesywnie
-      for (let batch = 2; batch <= 4; batch++) {
+    ;(async () => {
+      for (const batch of remainingGoogleBatches) {
+        if (allGooglePlaces.length >= 50) break
         try {
-          const res = await fetch('/api/places', {
+          const res = await fetch('/api/google-places', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...payload, batch }),
+            body: JSON.stringify({ queries: batch, baseCity: room.end_city || '', country: room.country || '', baseLat: fetchedBaseLat, baseLon: fetchedBaseLon, radius }),
           })
           if (!res.ok) continue
-          const data = await res.json()
-          const newPlaces = (data.places || [])
-            .filter((p: AIPlace) => p?.name && !allPlaces.find(ep => ep.name === p.name))
-            .map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-
-          // Dodaj bez verify
+          const gData = await res.json()
+          const newPlaces = (gData.places || []).filter((np: AIPlace) => !allGooglePlaces.find(ep => ep.googlePlaceId === np.googlePlaceId))
           for (const place of newPlaces) {
-            await new Promise(r => setTimeout(r, 100))
-            allPlaces = [...allPlaces, place]
-            setAiPlaces(prev => [...prev, place])
+            await new Promise(r => setTimeout(r, 80))
+            allGooglePlaces = [...allGooglePlaces, place]
+            setAiPlaces(prev => [...prev, place].sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
           }
-
-          // Weryfikuj nowe w tle i zapisuj
-          verifyAndMerge(newPlaces, region).then(async verified => {
-            // Deduplikuj z istniejącymi po placeId
-            const verifiedIds = new Set(verified.map(v => v.googlePlaceId).filter(Boolean))
-            setAiPlaces(prev => {
-              const deduped = prev.filter(p => !p.googlePlaceId || !verifiedIds.has(p.googlePlaceId) || verified.find(v => v.name === p.name))
-              const merged = deduped.map(p => {
-                const v = verified.find(vp => vp.name === p.name)
-                return v || p
-              })
-              allPlaces = merged
-              return merged
-            })
-            await saveRecommendations(allPlaces, posts.length)
-          })
         } catch {}
       }
+    })()
 
-    } catch (e) {
-      setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
-      setLoading(false)
-    }
+    // Krok 4: Reddit → DeepSeek → Local Gems w tle
+    setScanPhase(3)
+    ;(async () => {
+      if (posts.length === 0) return
+      setScanPhase(4)
+      const placesPayload = {
+        posts, activities: groupActivities, region,
+        baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation,
+        accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
+        numPeople: room.num_people || 4, startDate: room.start_date,
+        endDate: room.end_date, tripDays: tripDaysCalc,
+      }
+      for (let batch = 1; batch <= 3; batch++) {
+        try {
+          const res = await fetch('/api/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...placesPayload, batch }) })
+          if (!res.ok) continue
+          const data = await res.json()
+          for (const place of (data.places || [])) {
+            if (!place?.name) continue
+            const match = isAlreadyInGoogle(place.name, allGooglePlaces)
+            if (match) {
+              setAiPlaces(prev => prev.map(p => p.googlePlaceId === match.googlePlaceId
+                ? { ...p, redditSources: [...(p.redditSources || []), ...(place.sources || [])] } : p))
+            } else {
+              setLocalGems(prev => prev.find(p => p.name === place.name) ? prev : [...prev, { ...place, tags: place.tags || [], source: 'reddit' as const }])
+            }
+          }
+        } catch {}
+      }
+      await saveRecommendations([...allGooglePlaces], posts.length)
+    })()
   }
+
 
   async function savePlace(place: AIPlace) {
     if (savedPlaces.find(s => s.place_name === place.name)) return

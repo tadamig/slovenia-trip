@@ -82,24 +82,30 @@ function asSourceLinks(sourcePosts: unknown, posts: RedditPost[]): SourceLink[] 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   if (!raw) return null
 
-  const normalized = raw.replace(/```json|```/gi, '').trim()
-  try {
-    const parsed = JSON.parse(normalized)
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch {
-    const start = normalized.indexOf('{')
-    const end = normalized.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      const sliced = normalized.slice(start, end + 1)
-      try {
-        const parsed = JSON.parse(sliced)
-        return parsed && typeof parsed === 'object' ? parsed : null
-      } catch {
-        return null
-      }
-    }
-    return null
+  const candidates: string[] = []
+  const base = raw.replace(/```json|```/gi, '').trim()
+  candidates.push(base)
+
+  const start = base.indexOf('{')
+  const end = base.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    candidates.push(base.slice(start, end + 1))
   }
+
+  for (const candidate of candidates) {
+    const normalized = candidate
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/,\s*([}\]])/g, '$1')
+      .replace(/\u0000/g, '')
+      .trim()
+    try {
+      const parsed = JSON.parse(normalized)
+      return parsed && typeof parsed === 'object' ? parsed : null
+    } catch {}
+  }
+
+  return null
 }
 
 function normalizeMode(value: unknown): SearchMode {
@@ -228,6 +234,61 @@ Zwroc obiekt JSON:
 }`
 }
 
+function buildGoogleOnlyPrompt(params: {
+  searchMode: SearchMode
+  profileLines: string
+  googlePlaces: GooglePlace[]
+}) {
+  const { searchMode, profileLines, googlePlaces } = params
+  const styleNote =
+    searchMode === 'research'
+      ? 'Tryb RESEARCH: szukaj mniej oczywistych plusow miejsca, ale bez wymyslania danych.'
+      : 'Tryb STANDARD: skup sie na praktycznym opisie i dopasowaniu dla grupy.'
+
+  const googleLines = googlePlaces
+    .map(
+      (p, i) =>
+        `[G${i + 1}] ${p.name} | ${asString(p.address, '')} | typy: ${asArray<string>(p.types).slice(0, 4).join(', ')}`,
+    )
+    .join('\n')
+
+  return `Jestes ekspertem od podrozy. Odpowiadasz tylko poprawnym JSON-em.
+${styleNote}
+
+PROFIL EKIPY:
+${profileLines}
+
+Wzbogac tylko miejsca z Google:
+${googleLines}
+
+WYMAGANIA:
+- Dla kazdego miejsca zwroc informacje "dla calej ekipy".
+- Gdy nie masz danych dla pola, wpisz "brak danych".
+- recentReviewHighlights max 2 punkty.
+
+Zwroc obiekt JSON:
+{
+  "enriched": [
+    {
+      "googleIndex": 0,
+      "description": "2-3 zdania",
+      "whyThisGroup": "dlaczego pasuje calej ekipie",
+      "groupFitNote": "krotka etykieta dopasowania grupowego",
+      "bestTime": "najlepsza pora dnia/sezon albo brak danych",
+      "visitTips": "praktyczna wskazowka albo brak danych",
+      "reviewSummary": "krotkie podsumowanie opinii",
+      "recentReviewHighlights": ["punkt 1", "punkt 2"],
+      "tags": ["food"],
+      "estimatedCost": "free|cheap|moderate|expensive|brak danych",
+      "sourceCount": 0,
+      "sentiment": "pozytywny|neutralny|mieszany|brak danych",
+      "authenticityNote": "krotka notatka lub brak danych"
+    }
+  ],
+  "localGems": []
+}`
+}
+
 function buildRedditOnlyPrompt(params: {
   searchMode: SearchMode
   profileLines: string
@@ -326,6 +387,19 @@ async function callDeepSeek(prompt: string, maxTokens: number) {
   } finally {
     clearTimeout(timeout)
   }
+}
+
+async function repairJsonWithDeepSeek(raw: string, maxTokens: number) {
+  const repairPrompt = `Napraw ponizszy tekst do jednego poprawnego obiektu JSON.
+Zasady:
+- bez markdown
+- bez komentarzy
+- bez dodatkowego tekstu
+- zachowaj strukture i klucze
+
+TEKST:
+${raw.slice(0, 12000)}`
+  return callDeepSeek(repairPrompt, Math.min(maxTokens, 1400))
 }
 
 function normalizeEnrichedResult(params: {
@@ -441,9 +515,11 @@ export async function POST(request: NextRequest) {
       batch,
       searchMode,
       retriedParse: false,
+      usedRepairPass: false,
       parseOk: false,
       deepseekStatus: 0,
       deepseekError: '',
+      promptMode: 'mixed',
     }
 
     if (!region || !baseCity) {
@@ -474,7 +550,9 @@ export async function POST(request: NextRequest) {
     const hasGooglePlaces = googlePlaces.length > 0
 
     const prompt = hasGooglePlaces
-      ? buildGooglePrompt({ searchMode, profileLines, country, posts, googlePlaces })
+      ? (posts.length > 0
+          ? buildGooglePrompt({ searchMode, profileLines, country, posts, googlePlaces })
+          : buildGoogleOnlyPrompt({ searchMode, profileLines, googlePlaces }))
       : buildRedditOnlyPrompt({
           searchMode,
           profileLines,
@@ -484,6 +562,7 @@ export async function POST(request: NextRequest) {
           region,
           batch,
         })
+    diagnostics.promptMode = hasGooglePlaces ? (posts.length > 0 ? 'mixed' : 'google_only') : 'reddit_only'
 
     const maxTokens = hasGooglePlaces ? 2200 : 1700
     const deepseekRes = await callDeepSeek(prompt, maxTokens)
@@ -517,8 +596,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (!parsed) {
+      diagnostics.usedRepairPass = true
+      const repairRes = await repairJsonWithDeepSeek(rawText, maxTokens)
+      diagnostics.deepseekStatus = repairRes.status
+      if (repairRes.ok) {
+        const repairData = await repairRes.json()
+        const repairedRawText = repairData.choices?.[0]?.message?.content || '{}'
+        parsed = parseJsonObject(repairedRawText)
+      }
+    }
+
     if (!parsed) parsed = {}
     diagnostics.parseOk = Object.keys(parsed).length > 0
+    if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed'
 
     if (hasGooglePlaces) {
       const { enriched, localGems } = normalizeEnrichedResult({ parsed, googlePlaces, posts })

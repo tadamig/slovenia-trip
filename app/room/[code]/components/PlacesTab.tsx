@@ -680,20 +680,14 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     const monthCalc = room.start_date ? new Date(room.start_date).getMonth() + 1 : null
 
     const queryPayload = {
-      activities: groupActivities,
-      baseCity: room.end_city || '',
-      region,
-      transport: myPrefs.transport,
-      accommodation: myPrefs.accommodation,
-      intensity: myPrefs.intensity,
-      numPeople: room.num_people || 4,
-      budget: myPrefs.budget || 'any',
-      food: myPrefs.food || [],
-      tripDays: tripDaysCalc,
-      month: monthCalc,
+      activities: groupActivities, baseCity: room.end_city || '', region,
+      transport: myPrefs.transport, accommodation: myPrefs.accommodation,
+      intensity: myPrefs.intensity, numPeople: room.num_people || 4,
+      budget: myPrefs.budget || 'any', food: myPrefs.food || [],
+      tripDays: tripDaysCalc, month: monthCalc,
     }
 
-    // Krok 1: Dwa równoległe DeepSeek calls
+    // Krok 1: Równolegle — Google queries + Reddit queries (DeepSeek)
     setScanPhase(0)
     let googleQueries: string[] = []
     let generatedQueries: string[] = []
@@ -703,7 +697,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       fetch('/api/generate-google-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
       fetch('/api/generate-reddit-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
     ])
-
     if (gqRes.status === 'fulfilled' && gqRes.value.ok) {
       try { const d = await gqRes.value.json(); googleQueries = d.queries || [] } catch {}
     }
@@ -713,110 +706,127 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
     setScanPhase(1)
 
-    // Krok 2: Równolegle — Google Places + Reddit fetch
-    let allGooglePlaces: AIPlace[] = []
+    // Krok 2: Równolegle — Google Places + Reddit posts
+    let googlePlaces: any[] = []
     let posts: any[] = []
     let fetchedBaseLat: number | null = null
     let fetchedBaseLon: number | null = null
 
-    const [googleRes, redditPosts] = await Promise.allSettled([
+    const [googleRes, redditRes] = await Promise.allSettled([
       fetch('/api/google-places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ queries: googleQueries.slice(0, 10), baseCity: room.end_city || '', country: room.country || '', radius }),
       }),
       fetchRedditFromBrowser(
         groupActivities, region, room.end_city || '',
-        tripDaysCalc, monthCalc,
-        myPrefs.transport, myPrefs.accommodation, myPrefs.intensity,
-        myPrefs.budget || 'any', myPrefs.food || [], room.num_people || 4,
-        generatedQueries, generatedSubreddits
+        tripDaysCalc, monthCalc, myPrefs.transport, myPrefs.accommodation,
+        myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [],
+        room.num_people || 4, generatedQueries, generatedSubreddits
       ),
     ])
 
     if (googleRes.status === 'fulfilled' && googleRes.value.ok) {
       try {
         const gData = await googleRes.value.json()
-        allGooglePlaces = (gData.places || []).slice(0, 10)
+        googlePlaces = (gData.places || []).slice(0, 15)
         fetchedBaseLat = gData.baseLat
         fetchedBaseLon = gData.baseLon
         if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
         if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
       } catch {}
     }
-
-    if (redditPosts.status === 'fulfilled') {
-      posts = redditPosts.value
+    if (redditRes.status === 'fulfilled') {
+      posts = redditRes.value
       setPostsScanned(posts.length)
     }
 
     setScanPhase(2)
 
-    // Pokazuj Google Places od razu
-    setFadingOut(true)
-    await new Promise(r => setTimeout(r, 400))
-    setAiPlaces(allGooglePlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
-    setLoading(false)
-    setFadingOut(false)
-    await new Promise(r => setTimeout(r, 50))
-    setResultsVisible(true)
+    // Krok 3: DeepSeek wzbogaca miejsca Google + wyciąga Local Gems
+    // Wysyłamy oba: google places + posty Reddit
+    try {
+      const enrichRes = await fetch('/api/places', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          posts, googlePlaces,
+          activities: groupActivities, region,
+          baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation,
+          accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
+          numPeople: room.num_people || 4, startDate: room.start_date,
+          endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
+        }),
+      })
 
-    // Krok 3: Więcej Google Places w tle
-    const remainingGoogleBatches: string[][] = []
-    for (let i = 10; i < googleQueries.length; i += 8) remainingGoogleBatches.push(googleQueries.slice(i, i + 8))
+      setScanPhase(3)
 
-    ;(async () => {
-      for (const batch of remainingGoogleBatches) {
-        if (allGooglePlaces.length >= 50) break
-        try {
-          const res = await fetch('/api/google-places', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ queries: batch, baseCity: room.end_city || '', country: room.country || '', baseLat: fetchedBaseLat, baseLon: fetchedBaseLon, radius }),
-          })
-          if (!res.ok) continue
-          const gData = await res.json()
-          const newPlaces = (gData.places || []).filter((np: AIPlace) => !allGooglePlaces.find(ep => ep.googlePlaceId === np.googlePlaceId))
-          for (const place of newPlaces) {
-            await new Promise(r => setTimeout(r, 80))
-            allGooglePlaces = [...allGooglePlaces, place]
-            setAiPlaces(prev => [...prev, place].sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
-          }
-        } catch {}
+      let enrichedPlaces: AIPlace[] = []
+      let newLocalGems: AIPlace[] = []
+
+      if (enrichRes.ok) {
+        const enrichData = await enrichRes.json()
+        enrichedPlaces = (enrichData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+        newLocalGems = (enrichData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+      } else {
+        // Fallback — pokaż surowe Google places bez opisów
+        enrichedPlaces = googlePlaces.map((p: any) => ({ ...p, tags: p.tags || [] }))
       }
-    })()
 
-    // Krok 4: Reddit → DeepSeek → Local Gems w tle
-    setScanPhase(3)
-    ;(async () => {
-      if (posts.length === 0) return
-      setScanPhase(4)
-      const placesPayload = {
-        posts, activities: groupActivities, region,
-        baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation,
-        accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
-        numPeople: room.num_people || 4, startDate: room.start_date,
-        endDate: room.end_date, tripDays: tripDaysCalc,
-      }
-      for (let batch = 1; batch <= 3; batch++) {
-        try {
-          const res = await fetch('/api/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...placesPayload, batch }) })
-          if (!res.ok) continue
-          const data = await res.json()
-          for (const place of (data.places || [])) {
-            if (!place?.name) continue
-            const match = isAlreadyInGoogle(place.name, allGooglePlaces)
-            if (match) {
-              setAiPlaces(prev => prev.map(p => p.googlePlaceId === match.googlePlaceId
-                ? { ...p, redditSources: [...(p.redditSources || []), ...(place.sources || [])] } : p))
-            } else {
-              setLocalGems(prev => prev.find(p => p.name === place.name) ? prev : [...prev, { ...place, tags: place.tags || [], source: 'reddit' as const }])
+      // Pokaż wyniki
+      setFadingOut(true)
+      await new Promise(r => setTimeout(r, 400))
+      setAiPlaces(enrichedPlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
+      setLocalGems(newLocalGems)
+      setLoading(false)
+      setFadingOut(false)
+      await new Promise(r => setTimeout(r, 50))
+      setResultsVisible(true)
+
+      await saveRecommendations(enrichedPlaces, posts.length)
+
+      // W tle: kolejne Google Places batche
+      ;(async () => {
+        if (!googleQueries.length) return
+        let allPlaces = [...enrichedPlaces]
+        for (let i = 10; i < googleQueries.length; i += 8) {
+          if (allPlaces.length >= 50) break
+          try {
+            const res = await fetch('/api/google-places', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ queries: googleQueries.slice(i, i + 8), baseCity: room.end_city || '', country: room.country || '', baseLat: fetchedBaseLat, baseLon: fetchedBaseLon, radius }),
+            })
+            if (!res.ok) continue
+            const gData = await res.json()
+            const newGooglePlaces = (gData.places || []).filter((np: any) => !allPlaces.find(ep => ep.googlePlaceId === np.googlePlaceId))
+            if (!newGooglePlaces.length) continue
+
+            // Wzbogać nowe miejsca
+            const enrichRes2 = await fetch('/api/places', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
+            })
+            if (!enrichRes2.ok) continue
+            const eData = await enrichRes2.json()
+            const morePlaces = (eData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+            const moreGems = (eData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+
+            for (const place of morePlaces) {
+              await new Promise(r => setTimeout(r, 80))
+              allPlaces = [...allPlaces, place]
+              setAiPlaces(prev => [...prev, place].sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
             }
-          }
-        } catch {}
-      }
-      await saveRecommendations([...allGooglePlaces], posts.length)
-    })()
+            setLocalGems(prev => {
+              const existing = new Set(prev.map(p => p.name))
+              return [...prev, ...moreGems.filter((g: AIPlace) => !existing.has(g.name))]
+            })
+          } catch {}
+        }
+        await saveRecommendations(allPlaces, posts.length)
+      })()
+
+    } catch (e) {
+      setError('Nie udało się pobrać rekomendacji. Sprawdź połączenie.')
+      setLoading(false)
+    }
   }
 
 

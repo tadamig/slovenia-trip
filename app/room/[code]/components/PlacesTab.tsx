@@ -767,8 +767,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         const enrichData = await enrichRes.json()
         enrichedPlaces = (enrichData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
         newLocalGems = (enrichData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-      } else {
-        // Fallback — pokaż surowe Google places bez opisów
+      }
+      // Fallback — gdy enrichment pusty, pokaż surowe Google places
+      if (enrichedPlaces.length === 0 && googlePlaces.length > 0) {
         enrichedPlaces = googlePlaces.map((p: any) => ({ ...p, tags: p.tags || [] }))
       }
 

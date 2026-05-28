@@ -185,8 +185,11 @@ Zwróć JSON (dokładnie 10 miejsc):
     } catch {}
 
     if (hasGooglePlaces) {
-      const enrichedPlaces = (parsed.enriched || []).map((e: any) => {
-        const gPlace = googlePlaces[e.googleIndex]
+      // Obsłuż oba formaty — nowy (enriched) i stary (places)
+      const enrichedArray = parsed.enriched || parsed.places || []
+      const enrichedPlaces = enrichedArray.map((e: any) => {
+        // Jeśli nie ma googleIndex, to jest format bez indeksu - szukaj po nazwie
+        const gPlace = e.googleIndex !== undefined ? googlePlaces[e.googleIndex] : googlePlaces.find((g: any) => g.name === e.name)
         if (!gPlace) return null
         return {
           ...gPlace,

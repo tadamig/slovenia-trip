@@ -297,8 +297,12 @@ Zwroc JSON:
 }`
 }
 
-async function callDeepSeek(prompt: string) {
-  return fetch('https://api.deepseek.com/chat/completions', {
+async function callDeepSeek(prompt: string, maxTokens: number) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 45000)
+
+  try {
+    return await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -306,7 +310,7 @@ async function callDeepSeek(prompt: string) {
     },
     body: JSON.stringify({
       model: 'deepseek-chat',
-      max_tokens: 4000,
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -317,7 +321,11 @@ async function callDeepSeek(prompt: string) {
         { role: 'user', content: prompt },
       ],
     }),
+      signal: controller.signal,
   })
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function normalizeEnrichedResult(params: {
@@ -407,9 +415,9 @@ function normalizeRedditPlaces(parsed: Record<string, unknown>, posts: RedditPos
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const posts = asArray<RedditPost>(body.posts)
+    const inputPosts = asArray<RedditPost>(body.posts)
     const activities = asArray<string>(body.activities)
-    const googlePlaces = asArray<GooglePlace>(body.googlePlaces)
+    const inputGooglePlaces = asArray<GooglePlace>(body.googlePlaces)
 
     const region = asString(body.region, '')
     const baseCity = asString(body.baseCity, '')
@@ -421,6 +429,10 @@ export async function POST(request: NextRequest) {
     const tripDays = typeof body.tripDays === 'number' ? body.tripDays : null
     const batch = typeof body.batch === 'number' ? body.batch : 1
     const searchMode = normalizeMode(body.searchMode ?? body.mode)
+    const maxPosts = searchMode === 'research' ? 28 : 20
+    const maxGooglePlaces = batch === 1 ? 16 : 10
+    const posts = inputPosts.slice(0, maxPosts)
+    const googlePlaces = inputGooglePlaces.slice(0, maxGooglePlaces)
 
     if (!region || !baseCity) {
       return NextResponse.json({
@@ -460,7 +472,8 @@ export async function POST(request: NextRequest) {
           batch,
         })
 
-    const deepseekRes = await callDeepSeek(prompt)
+    const maxTokens = hasGooglePlaces ? 2200 : 1700
+    const deepseekRes = await callDeepSeek(prompt, maxTokens)
     if (!deepseekRes.ok) {
       return NextResponse.json({
         places: [],
@@ -478,6 +491,7 @@ export async function POST(request: NextRequest) {
     if (!parsed) {
       const retryRes = await callDeepSeek(
         `${prompt}\n\nPOPRAWKA: odpowiedz musi byc jednym obiektem JSON bez markdown i bez dodatkowego tekstu.`,
+        maxTokens,
       )
       if (retryRes.ok) {
         const retryData = await retryRes.json()

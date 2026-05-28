@@ -51,7 +51,7 @@ export default function RoomPage() {
         .select('*')
         .eq('room_id', roomData.id)
         .eq('session_id', sid)
-        .single()
+        .maybeSingle()
 
       // Jeśli nie ma preferencji — spróbuj znaleźć po imieniu i przywróć session_id
       if (!myPrefsData) {
@@ -62,7 +62,7 @@ export default function RoomPage() {
             .select('session_id')
             .eq('room_id', roomData.id)
             .eq('user_name', name)
-            .single()
+            .maybeSingle()
 
           if (byName?.session_id) {
             setSessionId(byName.session_id)
@@ -74,7 +74,7 @@ export default function RoomPage() {
               .select('*')
               .eq('room_id', roomData.id)
               .eq('session_id', sid)
-              .single()
+              .maybeSingle()
 
             setMyPrefs(restored || null)
           } else {

@@ -36,7 +36,7 @@ async function fetchRedditFromBrowser(
   prebuiltQueries?: string[],
   prioritySubreddits?: string[]
 ): Promise<any[]> {
-  // Użyj gotowych zapytań od DeepSeek lub fallback
+  // Use prebuilt queries from DeepSeek, otherwise fallback.
   const queries = prebuiltQueries && prebuiltQueries.length > 0
     ? prebuiltQueries
     : [
@@ -45,47 +45,47 @@ async function fetchRedditFromBrowser(
         `${region} recommend reddit`,
         `visit ${region} advice`,
       ]
-  const allPosts: any[] = []
-  const seenUrls = new Set<string>()
 
-  // Pobierz równolegle po 4 zapytania naraz
-  for (let i = 0; i < queries.length; i += 4) {
-    const batch = queries.slice(i, i + 4)
-    const results = await Promise.allSettled(
-      batch.map(async (query) => {
-        const res = await fetch(
-          `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=15&t=year`,
-          { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } }
-        )
-        if (!res.ok) return []
-        const data = await res.json()
-        return (data.data?.children || [])
-          .map((c: any) => ({
-            title: c.data.title,
-            score: c.data.score,
-            url: `https://reddit.com${c.data.permalink}`,
-            subreddit: c.data.subreddit,
-            text: (c.data.selftext || '').slice(0, 400),
-            numComments: c.data.num_comments || 0,
-            priority: getPostPriority(c.data.subreddit, prioritySubreddits || []),
-          }))
-          .filter((p: any) => p.priority >= 0 && p.score >= 3)
-      })
+  const res = await fetch('/api/reddit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      queries: queries.slice(0, 18),
+      sort: 'relevance',
+      time: 'year',
+      limitPerQuery: 12,
+    }),
+  })
+
+  if (!res.ok) return []
+  const data = await res.json()
+  const allPosts: any[] = (data.posts || [])
+    .map((p: any) => ({
+      title: p.title,
+      score: p.score,
+      url: p.url,
+      subreddit: p.subreddit,
+      text: p.text || '',
+      numComments: p.numComments || 0,
+      priority: getPostPriority(p.subreddit, prioritySubreddits || []),
+    }))
+    .filter((p: any) => p.priority >= 0 && p.score >= 3)
+
+  if (allPosts.length === 0) {
+    const fallbackRes = await fetch(
+      `/api/reddit?q=${encodeURIComponent(`${baseCity || region} travel tips`)}&sort=relevance&limit=20&t=year`
     )
-
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        for (const p of result.value) {
-          if (!seenUrls.has(p.url)) {
-            seenUrls.add(p.url)
-            allPosts.push(p)
-          }
-        }
-      }
-    }
+    if (!fallbackRes.ok) return []
+    const fallbackData = await fallbackRes.json()
+    return (fallbackData.posts || [])
+      .map((p: any) => ({
+        ...p,
+        priority: getPostPriority(p.subreddit, prioritySubreddits || []),
+      }))
+      .filter((p: any) => p.priority >= 0)
   }
 
-  // Sortuj — priorytetowe subreddity pierwsze, potem po score
+  // Sort with priority subreddits first, then by score.
   allPosts.sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority
     return b.score - a.score
@@ -1197,3 +1197,4 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     </div>
   )
 }
+

@@ -50,7 +50,7 @@ export default function LandingPage() {
     if (!roomCode.trim()) { setError('Podaj kod pokoju'); return }
     setLoading(true); setError('')
     try {
-      const { data, error: dbError } = await supabase.from('rooms').select('code').eq('code', roomCode.toUpperCase().trim()).single()
+      const { data, error: dbError } = await supabase.from('rooms').select('code').eq('code', roomCode.toUpperCase().trim()).maybeSingle()
       if (dbError || !data) { setError('Nie znaleziono pokoju.'); setLoading(false); return }
       setSessionName(userName.trim())
       router.push(`/room/${roomCode.toUpperCase().trim()}`)

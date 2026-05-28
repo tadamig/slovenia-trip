@@ -923,8 +923,30 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       {/* Błąd */}
       {error && <p className="text-red-400 text-xs bg-red-400/10 rounded-xl px-4 py-3">{error}</p>}
 
+      {/* Zakładki Google / Reddit */}
+      {!loading && (aiPlaces.length > 0 || localGems.length > 0) && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => setActiveSource('google')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+              activeSource === 'google' ? 'bg-water-900/30 border-water-600/40 text-water-300' : 'bg-stone-800/40 border-stone-700/40 text-stone-500'
+            }`}
+          >
+            ✅ Google Places {aiPlaces.length > 0 && <span className="text-xs opacity-60">({aiPlaces.length})</span>}
+          </button>
+          <button
+            onClick={() => setActiveSource('reddit')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+              activeSource === 'reddit' ? 'bg-amber-900/30 border-amber-600/40 text-amber-300' : 'bg-stone-800/40 border-stone-700/40 text-stone-500'
+            }`}
+          >
+            🔥 Lokalne perełki {localGems.length > 0 && <span className="text-xs opacity-60">({localGems.length})</span>}
+          </button>
+        </div>
+      )}
+
       {/* Filtry kategorii */}
-      {!loading && aiPlaces.length > 0 && (
+      {!loading && activeSource === 'google' && aiPlaces.length > 0 && (
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setActiveTag(null)}

@@ -64,22 +64,36 @@ interface VerifiedPlace {
 
 // Wyciąga kluczową nazwę własną z opisowej nazwy
 function extractKeyName(name: string): string {
-  // Usuń część przed "–" lub " - " (często lokalizacja/opis po polsku)
+  // Podziel po myślniku
   const dashParts = name.split(/\s*[–-]\s*/)
-  let key = dashParts.length > 1 ? dashParts[dashParts.length - 1] : name
 
-  // Usuń polskie słowa opisowe
-  const polishWords = ['willa', 'ogrody', 'ogród', 'miasto', 'perła', 'baza', 'trasy', 'wędrówki',
-    'jezioro', 'nad', 'jeziorem', 'wschodnim', 'ramieniem', 'zachodnim', 'centrum',
-    'stare', 'starego', 'centrum', 'okolice', 'okolica', 'szlaki', 'szlak',
-    'widok', 'widoki', 'dolina', 'góry', 'park', 'rezerwat', 'zabytki', 'zabytek',
-    'muzeum', 'kościół', 'zamek', 'most', 'plac', 'ulica', 'dzielnica']
+  if (dashParts.length > 1) {
+    // Sprawdź czy część PRZED myślnikiem wygląda jak nazwa własna
+    // (zaczyna się wielką literą i nie jest samym opisem po polsku)
+    const before = dashParts[0].trim()
+    const after = dashParts[dashParts.length - 1].trim()
 
-  const words = key.split(' ')
-  const filtered = words.filter(w => !polishWords.includes(w.toLowerCase()))
-  key = filtered.length >= 2 ? filtered.join(' ') : key // zostaw oryginał jeśli za krótko
+    const polishDescWords = ['lokalne', 'piękne', 'malownicze', 'najlepsze', 'słynne',
+      'historyczne', 'stare', 'nowe', 'wielkie', 'małe', 'górskie', 'jeziorne',
+      'trasy', 'szlaki', 'widoki', 'okolice', 'wędrówki', 'baza', 'perła']
 
-  return key.trim()
+    const beforeWords = before.toLowerCase().split(' ')
+    const beforeIsDesc = beforeWords.every(w => polishDescWords.includes(w))
+    const afterIsDesc = after.split(' ').some(w => polishDescWords.includes(w.toLowerCase()))
+
+    // Bierz przed myślnikiem jeśli wygląda jak nazwa własna
+    if (!beforeIsDesc && /^[A-ZŁŚÓĄĘĆŻŹ]/.test(before)) {
+      return before
+    }
+    // Jeśli po myślniku jest opis po polsku — zostaw całą oryginalną nazwę
+    if (afterIsDesc) {
+      return before || name
+    }
+    // W przeciwnym razie bierz po myślniku
+    return after
+  }
+
+  return name.trim()
 }
 
 // Mapowanie tagów DeepSeek na Google Place types

@@ -614,7 +614,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       const verifyRes = await fetch('/api/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ places: places.map(p => ({ name: p.name, region: p.region || region, subregion: p.subregion, country: p.country, lat: p.lat, lon: p.lon })) }),
+        body: JSON.stringify({ places: places.map(p => ({ name: p.name, region: p.region || region, subregion: p.subregion, country: p.country, lat: p.lat, lon: p.lon, tags: p.tags })) }),
       })
       if (!verifyRes.ok) return places
       const verifyData = await verifyRes.json()

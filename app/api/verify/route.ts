@@ -45,6 +45,7 @@ interface PlaceToVerify {
   country?: string
   lat?: number
   lon?: number
+  tags?: string[]
 }
 
 interface VerifiedPlace {
@@ -61,6 +62,47 @@ interface VerifiedPlace {
   similarity?: number
 }
 
+// Wyciąga kluczową nazwę własną z opisowej nazwy
+function extractKeyName(name: string): string {
+  // Usuń część przed "–" lub " - " (często lokalizacja/opis po polsku)
+  const dashParts = name.split(/\s*[–-]\s*/)
+  let key = dashParts.length > 1 ? dashParts[dashParts.length - 1] : name
+
+  // Usuń polskie słowa opisowe
+  const polishWords = ['willa', 'ogrody', 'ogród', 'miasto', 'perła', 'baza', 'trasy', 'wędrówki',
+    'jezioro', 'nad', 'jeziorem', 'wschodnim', 'ramieniem', 'zachodnim', 'centrum',
+    'stare', 'starego', 'centrum', 'okolice', 'okolica', 'szlaki', 'szlak',
+    'widok', 'widoki', 'dolina', 'góry', 'park', 'rezerwat', 'zabytki', 'zabytek',
+    'muzeum', 'kościół', 'zamek', 'most', 'plac', 'ulica', 'dzielnica']
+
+  const words = key.split(' ')
+  const filtered = words.filter(w => !polishWords.includes(w.toLowerCase()))
+  key = filtered.length >= 2 ? filtered.join(' ') : key // zostaw oryginał jeśli za krótko
+
+  return key.trim()
+}
+
+// Mapowanie tagów DeepSeek na Google Place types
+const TAG_TO_GOOGLE_TYPES: Record<string, string[]> = {
+  food: ['restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway', 'food', 'establishment'],
+  sightseeing: ['tourist_attraction', 'museum', 'church', 'place_of_worship', 'art_gallery', 'historic_site', 'point_of_interest'],
+  relax: ['spa', 'park', 'natural_feature', 'campground', 'lodging', 'tourist_attraction'],
+  trekking: ['natural_feature', 'park', 'campground', 'tourist_attraction', 'point_of_interest'],
+  sup: ['natural_feature', 'park', 'tourist_attraction', 'campground'],
+  cycling: ['park', 'natural_feature', 'tourist_attraction', 'point_of_interest'],
+  nightlife: ['bar', 'night_club', 'restaurant', 'establishment'],
+  markets: ['store', 'shopping_mall', 'market', 'establishment', 'food'],
+  photo: ['tourist_attraction', 'natural_feature', 'park', 'point_of_interest'],
+  sunset: ['natural_feature', 'park', 'tourist_attraction', 'point_of_interest'],
+}
+
+function typeMatchesTags(googleTypes: string[], tags: string[]): boolean {
+  if (!tags?.length || !googleTypes?.length) return true // brak danych = przepuszczamy
+  const allowedTypes = new Set(tags.flatMap(tag => TAG_TO_GOOGLE_TYPES[tag] || []))
+  if (allowedTypes.size === 0) return true
+  return googleTypes.some(t => allowedTypes.has(t))
+}
+
 async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
   if (!GOOGLE_API_KEY) {
     return { name: place.name, verified: false, reason: 'no_api_key' }
@@ -72,15 +114,16 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
       austria: 'Austria', italy: 'Italy', czechia: 'Czech Republic', europe: '',
     }
     const country = place.country || REGION_TO_COUNTRY[place.region] || place.region
-    // Wyznacz region z kraju (nie z place.region który może być np. "Lombardy")
     const COUNTRY_TO_REGION: Record<string, string> = {
       'slovenia': 'slovenia', 'hungary': 'budapest', 'croatia': 'croatia',
       'austria': 'austria', 'italy': 'italy', 'czech republic': 'czechia',
     }
     const detectedRegion = COUNTRY_TO_REGION[country.toLowerCase()] || 'europe'
-    // Użyj subregion jeśli dostępny dla bardziej precyzyjnego szukania
+
+    // Wyciągnij kluczową nazwę własną + użyj subregion jako kontekst
+    const keyName = extractKeyName(place.name)
     const location = place.subregion || country
-    const query = `${place.name} ${location}`
+    const query = `${keyName} ${location}`
 
     // Dodaj location bias jeśli mamy koordynaty od DeepSeek
     const locationBias = place.lat && place.lon
@@ -109,7 +152,8 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
       if (!lat || !lon) continue
       if (!isInRegion(lat, lon, detectedRegion)) continue
 
-      const similarity = nameSimilarity(place.name, candidate.name)
+      const keyN = extractKeyName(place.name)
+      const similarity = Math.max(nameSimilarity(place.name, candidate.name), nameSimilarity(keyN, candidate.name))
       if (similarity > bestSimilarity) {
         bestSimilarity = similarity
         bestMatch = candidate
@@ -117,7 +161,7 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
     }
 
     // Wymaga >70% podobieństwa nazwy
-    if (!bestMatch || bestSimilarity < 0.7) {
+    if (!bestMatch || bestSimilarity < 0.50) {
       const debugCandidates = candidates.slice(0, 2).map((c: any) => {
         const clat = c.geometry?.location?.lat
         const clon = c.geometry?.location?.lng
@@ -133,6 +177,15 @@ async function verifyWithGoogle(place: PlaceToVerify): Promise<VerifiedPlace> {
 
     const lat = bestMatch.geometry.location.lat
     const lon = bestMatch.geometry.location.lng
+
+    // Sprawdź czy typ miejsca pasuje do tagów
+    if (place.tags?.length && !typeMatchesTags(bestMatch.types || [], place.tags)) {
+      return {
+        name: place.name,
+        verified: false,
+        reason: `wrong_type_${(bestMatch.types || []).slice(0,2).join(',')}_for_tags:${place.tags.join(',')}`,
+      }
+    }
 
     // Pobierz status otwarcia
     let isOpen: boolean | null = null

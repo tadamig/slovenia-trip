@@ -39,7 +39,7 @@ const REGION_TO_COUNTRY: Record<string, string> = {
   spain: 'Spain',
 }
 
-const CHUNK_SIZE = 6
+const CHUNK_SIZE = 5
 
 const transportLabels: Record<string, string> = {
   van: 'van/kamper',
@@ -178,20 +178,19 @@ ${googleLines}
 WYMAGANIA:
 - Dla kazdego miejsca zwroc informacje "dla calej ekipy".
 - Gdy nie masz danych dla pola, wpisz "brak danych".
-- recentReviewHighlights max 2 punkty.
+- Pisz zwiezle: max 1 zdanie na pole (description max 1-2 krotkie zdania).
 
 Zwroc obiekt JSON:
 {
   "enriched": [
     {
       "googleIndex": 0,
-      "description": "2-3 zdania",
-      "whyThisGroup": "dlaczego pasuje calej ekipie",
+      "description": "1-2 krotkie zdania",
+      "whyThisGroup": "1 zdanie: dlaczego pasuje calej ekipie",
       "groupFitNote": "krotka etykieta dopasowania grupowego",
-      "bestTime": "najlepsza pora dnia/sezon albo brak danych",
-      "visitTips": "praktyczna wskazowka albo brak danych",
-      "reviewSummary": "krotkie podsumowanie opinii",
-      "recentReviewHighlights": ["punkt 1", "punkt 2"],
+      "bestTime": "krotko: najlepsza pora dnia/sezon albo brak danych",
+      "visitTips": "krotko: praktyczna wskazowka albo brak danych",
+      "reviewSummary": "1 zdanie podsumowania opinii",
       "tags": ["food"],
       "estimatedCost": "free|cheap|moderate|expensive|brak danych",
       "sourceCount": 0,
@@ -349,12 +348,12 @@ async function enrichGoogleChunk(params: {
   const { searchMode, profileLines, chunk } = params
   const prompt = buildGoogleOnlyPrompt({ searchMode, profileLines, googlePlaces: chunk })
 
-  let { parsed, status } = await callAndParse(prompt, 1600)
+  let { parsed, status } = await callAndParse(prompt, 2400)
   // One lightweight retry only for this chunk if it failed to parse.
   if (!parsed) {
     const retry = await callAndParse(
       `${prompt}\n\nPOPRAWKA: odpowiedz musi byc jednym obiektem JSON bez markdown i bez dodatkowego tekstu.`,
-      1600,
+      2400,
     )
     parsed = retry.parsed
     status = retry.status

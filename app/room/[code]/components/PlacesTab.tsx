@@ -12,6 +12,39 @@ function countryToRegion(country: string): string {
   return 'europe' // fallback — Europa ogólnie
 }
 
+// Deterministyczne zapytania Google budowane lokalnie — bez czekania na DeepSeek.
+const ACTIVITY_QUERY_TEMPLATES: Record<string, string[]> = {
+  sup: ['SUP rental', 'paddleboarding spot', 'kayak rental'],
+  trekking: ['hiking trail', 'best hike', 'nature walk', 'scenic viewpoint hike'],
+  food: ['best local restaurant', 'traditional food', 'top rated restaurant'],
+  sunset: ['best sunset viewpoint', 'scenic viewpoint'],
+  sightseeing: ['top attractions', 'must see sights', 'historic landmark'],
+  relax: ['spa', 'thermal bath', 'wellness'],
+  photo: ['most photogenic spot', 'instagram spot'],
+  markets: ['local market', 'farmers market'],
+  nightlife: ['best bar', 'nightlife', 'pub'],
+  cycling: ['bike trail', 'cycling route'],
+  van: ['campsite', 'camper stop'],
+  tent: ['campground', 'camping'],
+}
+
+function buildGoogleQueries(
+  activities: string[], baseCity: string, country: string, mode: SearchMode
+): string[] {
+  const place = baseCity || country || 'Slovenia'
+  const acts = activities.length > 0 ? activities : ['sightseeing', 'food']
+  const queries: string[] = []
+  for (const a of acts) {
+    const templates = ACTIVITY_QUERY_TEMPLATES[a] || [a]
+    for (const t of templates) queries.push(`${t} ${place}`)
+  }
+  queries.push(`things to do ${place}`, `${country || place} hidden gem`, `top rated ${place}`)
+  if (mode === 'research') {
+    queries.push(`local secret spot ${place}`, `off the beaten path ${country || place}`)
+  }
+  return Array.from(new Set(queries)).slice(0, 15)
+}
+
 const SUBREDDIT_BLACKLIST = new Set([
   'leopardsatemyface','politics','worldnews','news','conspiracy','memes','funny',
   'gaming','sports','nfl','nba','soccer','movies','television','music','stocks',
@@ -578,6 +611,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [enriching, setEnriching] = useState(false)
   const [error, setError] = useState('')
   const [debugLine, setDebugLine] = useState('')
+  const [redditUnavailable, setRedditUnavailable] = useState(false)
   const sessionId = getSessionId()
 
   const groupActivities = (() => {
@@ -655,7 +689,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       activities: groupActivities,
       region,
       searchMode,
-      transport: myPrefs.transport || myPrefs.accommodation,
+      transport: myPrefs.transport,
       accommodation: myPrefs.accommodation,
       intensity: myPrefs.intensity,
       numPeople: room.num_people || 4,
@@ -704,39 +738,12 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     }) || null
   }
 
-  async function verifyAndMerge(places: AIPlace[], region: string): Promise<AIPlace[]> {
-    try {
-      const verifyRes = await fetch('/api/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ places: places.map(p => ({ name: p.name, region: p.region || region, subregion: p.subregion, country: p.country, lat: p.lat, lon: p.lon, tags: p.tags })) }),
-      })
-      if (!verifyRes.ok) return places
-      const verifyData = await verifyRes.json()
-      return places.map(p => {
-        const v = verifyData.verified?.find((vp: any) => vp.name === p.name)
-        if (!v?.verified) return p
-        return {
-          ...p,
-          verified: true,
-          lat: v.lat || p.lat,
-          lon: v.lon || p.lon,
-          googleRating: v.rating,
-          googleTotalRatings: v.totalRatings,
-          isOpen: v.isOpen,
-          googleAddress: v.address,
-        }
-      })
-    } catch {
-      return places
-    }
-  }
-
   async function handleSearch() {
     setLoading(true)
     setEnriching(false)
     setError('')
     setDebugLine('')
+    setRedditUnavailable(false)
     setAiPlaces([])
     setLocalGems([])
     setResultsVisible(false)
@@ -760,43 +767,45 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       tripDays: tripDaysCalc, month: monthCalc,
     }
 
-    // Krok 1: Równolegle — Google queries + Reddit queries (DeepSeek)
+    // Krok 1: zapytania Google budujemy lokalnie (bez DeepSeek), zeby nie blokowac startu.
     setScanPhase(0)
-    let googleQueries: string[] = []
-    let generatedQueries: string[] = []
-    let generatedSubreddits: string[] = []
-
-    const [gqRes, rqRes] = await Promise.allSettled([
-      fetch('/api/generate-google-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
-      fetch('/api/generate-reddit-queries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload) }),
-    ])
-    if (gqRes.status === 'fulfilled' && gqRes.value.ok) {
-      try { const d = await gqRes.value.json(); googleQueries = d.queries || [] } catch {}
-    }
-    if (rqRes.status === 'fulfilled' && rqRes.value.ok) {
-      try { const d = await rqRes.value.json(); generatedQueries = d.queries || []; generatedSubreddits = d.subreddits || [] } catch {}
-    }
+    const googleQueries = buildGoogleQueries(groupActivities, room.end_city || '', room.country || '', searchMode)
 
     setScanPhase(1)
 
-    // Krok 2: Równolegle — Google Places + Reddit posts
+    // Krok 2: Google Places startuje natychmiast; Reddit (z DeepSeek query-gen) leci
+    // rownolegle i nie blokuje pokazania kart Google.
     let googlePlaces: any[] = []
     let posts: any[] = []
     let redditMeta: any = null
+    let generatedQueries: string[] = []
     let fetchedBaseLat: number | null = null
     let fetchedBaseLon: number | null = null
+
+    const redditTask = (async () => {
+      let genQueries: string[] = []
+      let genSubreddits: string[] = []
+      try {
+        const rqRes = await fetch('/api/generate-reddit-queries', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload),
+        })
+        if (rqRes.ok) { const d = await rqRes.json(); genQueries = d.queries || []; genSubreddits = d.subreddits || [] }
+      } catch {}
+      generatedQueries = genQueries
+      return fetchRedditFromBrowser(
+        groupActivities, region, room.end_city || '',
+        tripDaysCalc, monthCalc, myPrefs.transport, myPrefs.accommodation,
+        myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [],
+        room.num_people || 4, genQueries, genSubreddits
+      )
+    })()
 
     const [googleRes, redditRes] = await Promise.allSettled([
       fetch('/api/google-places', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ queries: googleQueries, baseCity: room.end_city || '', country: room.country || '', radius }),
       }),
-      fetchRedditFromBrowser(
-        groupActivities, region, room.end_city || '',
-        tripDaysCalc, monthCalc, myPrefs.transport, myPrefs.accommodation,
-        myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [],
-        room.num_people || 4, generatedQueries, generatedSubreddits
-      ),
+      redditTask,
     ])
 
     if (googleRes.status === 'fulfilled' && googleRes.value.ok) {
@@ -814,6 +823,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       redditMeta = redditRes.value.meta || null
       setPostsScanned(posts.length)
     }
+    setRedditUnavailable(posts.length === 0)
 
     setScanPhase(2)
     const hasEarlyGoogleResults = googlePlaces.length > 0
@@ -845,7 +855,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
           posts, googlePlaces,
           activities: groupActivities, region,
           searchMode,
-          baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation,
+          baseCity: room.end_city || '', transport: myPrefs.transport,
           accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
           numPeople: room.num_people || 4, startDate: room.start_date,
           endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
@@ -921,7 +931,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
             // Wzbogać nowe miejsca
             const enrichRes2 = await fetch('/api/places', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, searchMode, baseCity: room.end_city || '', transport: myPrefs.transport || myPrefs.accommodation, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
+              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, searchMode, baseCity: room.end_city || '', transport: myPrefs.transport, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
             })
             if (!enrichRes2.ok) continue
             const eData = await enrichRes2.json()
@@ -1214,7 +1224,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
       {!loading && activeSource === 'reddit' && localGems.length === 0 && (
         <p className="text-xs text-stone-500 bg-stone-800/40 border border-stone-700/40 rounded-xl px-4 py-3">
-          Brak lokalnych perełek dla tego wyszukiwania. Spróbuj trybu Research lub odśwież wyniki.
+          {redditUnavailable
+            ? 'Reddit jako źródło jest chwilowo niedostępny — rekomendacje opieramy na Google Places. Lokalne perełki wrócą, gdy źródło znów zadziała.'
+            : 'Brak lokalnych perełek dla tego wyszukiwania. Spróbuj trybu Research lub odśwież wyniki.'}
         </p>
       )}
 

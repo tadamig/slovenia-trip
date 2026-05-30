@@ -39,6 +39,8 @@ const REGION_TO_COUNTRY: Record<string, string> = {
   spain: 'Spain',
 }
 
+const CHUNK_SIZE = 6
+
 const transportLabels: Record<string, string> = {
   van: 'van/kamper',
   own_car: 'wlasny samochod',
@@ -144,94 +146,6 @@ function buildProfileLines(params: {
     `- Czas trwania: ${daysInfo}`,
     `- Miasto bazowe: ${baseCity}, ${country}`,
   ].join('\n')
-}
-
-function buildGooglePrompt(params: {
-  searchMode: SearchMode
-  profileLines: string
-  country: string
-  posts: RedditPost[]
-  googlePlaces: GooglePlace[]
-}) {
-  const { searchMode, profileLines, country, posts, googlePlaces } = params
-  const styleNote =
-    searchMode === 'research'
-      ? 'Tryb RESEARCH: priorytet dla unikalnych i lokalnych miejsc (natura, szlaki, punkty widokowe, ukryte perełki).'
-      : 'Tryb STANDARD: priorytet dla sprawdzonych i popularnych miejsc z dobrym user experience.'
-
-  const googleLines = googlePlaces
-    .map(
-      (p, i) =>
-        `[G${i + 1}] ${p.name} | ${asString(p.address, '')} | typy: ${asArray<string>(p.types).slice(0, 4).join(', ')}`,
-    )
-    .join('\n')
-
-  const postLines = posts
-    .map(
-      (p, i) =>
-        `[${i + 1}] r/${p.subreddit} | ${p.score} pkt | "${p.title}"${
-          p.text ? `\n${p.text.slice(0, 220)}` : ''
-        }`,
-    )
-    .join('\n\n')
-
-  return `Jestes ekspertem od podrozy. Odpowiadasz tylko poprawnym JSON-em.
-${styleNote}
-
-PROFIL EKIPY:
-${profileLines}
-
-ZADANIE 1 - Wzbogac miejsca z Google:
-${googleLines}
-
-ZADANIE 2 - Znajdz lokalne polecajki z Reddit, ktorych nie ma na liscie Google:
-${postLines || 'Brak postow Reddit - zwroc pusta tablice localGems.'}
-
-WYMAGANIA:
-- Dla kazdego miejsca zwroc informacje "dla calej ekipy", nie dla pojedynczych osob.
-- Gdy nie masz danych dla pola, wpisz "brak danych".
-- "recentReviewHighlights" max 3 krotkie punkty.
-
-Zwroc obiekt JSON:
-{
-  "enriched": [
-    {
-      "googleIndex": 0,
-      "description": "2-3 zdania",
-      "whyThisGroup": "dlaczego pasuje calej ekipie",
-      "groupFitNote": "krotka etykieta dopasowania grupowego",
-      "bestTime": "najlepsza pora dnia/sezon albo brak danych",
-      "visitTips": "jak dojsc / praktyczna wskazowka albo brak danych",
-      "reviewSummary": "krotkie podsumowanie opinii",
-      "recentReviewHighlights": ["punkt 1", "punkt 2"],
-      "tags": ["trekking", "food"],
-      "estimatedCost": "free|cheap|moderate|expensive|brak danych",
-      "sourceCount": 2,
-      "sourcePosts": [1, 3],
-      "sentiment": "pozytywny|neutralny|mieszany|brak danych",
-      "authenticityNote": "krotka notatka lub brak danych"
-    }
-  ],
-  "localGems": [
-    {
-      "name": "Nazwa miejsca",
-      "description": "2-3 zdania",
-      "whyThisGroup": "dlaczego pasuje ekipie",
-      "groupFitNote": "krotka etykieta dopasowania grupowego",
-      "bestTime": "najlepsza pora dnia/sezon albo brak danych",
-      "visitTips": "jak dojsc / praktyczna wskazowka albo brak danych",
-      "reviewSummary": "krotkie podsumowanie zrodel",
-      "recentReviewHighlights": ["punkt 1", "punkt 2"],
-      "tags": ["sunset"],
-      "country": "${country}",
-      "subregion": "okolica",
-      "estimatedCost": "free|cheap|moderate|expensive|brak danych",
-      "sourceCount": 1,
-      "sourcePosts": [2],
-      "sentiment": "pozytywny|neutralny|mieszany|brak danych"
-    }
-  ]
-}`
 }
 
 function buildGoogleOnlyPrompt(params: {
@@ -389,17 +303,72 @@ async function callDeepSeek(prompt: string, maxTokens: number) {
   }
 }
 
-async function repairJsonWithDeepSeek(raw: string, maxTokens: number) {
-  const repairPrompt = `Napraw ponizszy tekst do jednego poprawnego obiektu JSON.
-Zasady:
-- bez markdown
-- bez komentarzy
-- bez dodatkowego tekstu
-- zachowaj strukture i klucze
+async function callAndParse(
+  prompt: string,
+  maxTokens: number,
+): Promise<{ parsed: Record<string, unknown> | null; status: number }> {
+  const res = await callDeepSeek(prompt, maxTokens)
+  if (!res.ok) return { parsed: null, status: res.status }
+  const data = await res.json()
+  const rawText = data.choices?.[0]?.message?.content || '{}'
+  return { parsed: parseJsonObject(rawText), status: res.status }
+}
 
-TEKST:
-${raw.slice(0, 12000)}`
-  return callDeepSeek(repairPrompt, Math.min(maxTokens, 1400))
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size))
+  }
+  return chunks
+}
+
+function rawGoogleFallback(places: GooglePlace[]) {
+  return places.map((p) => ({
+    ...p,
+    description: asString(p.description, 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.'),
+    whyThisGroup: 'Google zwrocil miejsce, ale AI nie wygenerowalo dopasowania.',
+    groupFitNote: 'AI: brak odpowiedzi',
+    bestTime: 'brak danych',
+    visitTips: 'brak danych',
+    reviewSummary: 'brak danych',
+    recentReviewHighlights: [] as string[],
+    tags: asArray<string>(p.tags),
+    estimatedCost: 'brak danych',
+    sourceCount: 0,
+    sentiment: 'brak danych',
+    authenticityNote: 'brak danych',
+    sources: [] as SourceLink[],
+  }))
+}
+
+async function enrichGoogleChunk(params: {
+  searchMode: SearchMode
+  profileLines: string
+  chunk: GooglePlace[]
+}): Promise<{ enriched: any[]; parseOk: boolean; status: number }> {
+  const { searchMode, profileLines, chunk } = params
+  const prompt = buildGoogleOnlyPrompt({ searchMode, profileLines, googlePlaces: chunk })
+
+  let { parsed, status } = await callAndParse(prompt, 1600)
+  // One lightweight retry only for this chunk if it failed to parse.
+  if (!parsed) {
+    const retry = await callAndParse(
+      `${prompt}\n\nPOPRAWKA: odpowiedz musi byc jednym obiektem JSON bez markdown i bez dodatkowego tekstu.`,
+      1600,
+    )
+    parsed = retry.parsed
+    status = retry.status
+  }
+
+  if (!parsed) {
+    return { enriched: rawGoogleFallback(chunk), parseOk: false, status }
+  }
+
+  const { enriched } = normalizeEnrichedResult({ parsed, googlePlaces: chunk, posts: [] })
+  if (enriched.length === 0) {
+    return { enriched: rawGoogleFallback(chunk), parseOk: false, status }
+  }
+  return { enriched, parseOk: true, status }
 }
 
 function normalizeEnrichedResult(params: {
@@ -514,8 +483,6 @@ export async function POST(request: NextRequest) {
       googlePlacesSentToAI: googlePlaces.length,
       batch,
       searchMode,
-      retriedParse: false,
-      usedRepairPass: false,
       parseOk: false,
       deepseekStatus: 0,
       deepseekError: '',
@@ -548,103 +515,58 @@ export async function POST(request: NextRequest) {
       country,
     })
     const hasGooglePlaces = googlePlaces.length > 0
-
-    const prompt = hasGooglePlaces
-      ? (posts.length > 0
-          ? buildGooglePrompt({ searchMode, profileLines, country, posts, googlePlaces })
-          : buildGoogleOnlyPrompt({ searchMode, profileLines, googlePlaces }))
-      : buildRedditOnlyPrompt({
-          searchMode,
-          profileLines,
-          country,
-          baseCity,
-          posts,
-          region,
-          batch,
-        })
     diagnostics.promptMode = hasGooglePlaces ? (posts.length > 0 ? 'mixed' : 'google_only') : 'reddit_only'
 
-    const maxTokens = hasGooglePlaces ? 2200 : 1700
-    const deepseekRes = await callDeepSeek(prompt, maxTokens)
-    diagnostics.deepseekStatus = deepseekRes.status
-    if (!deepseekRes.ok) {
-      return NextResponse.json({
-        places: [],
-        localGems: [],
-        postsAnalyzed: posts.length,
-        error: 'DeepSeek error',
-        meta: diagnostics,
-      })
-    }
-
-    const deepseekData = await deepseekRes.json()
-    const rawText = deepseekData.choices?.[0]?.message?.content || '{}'
-    let parsed = parseJsonObject(rawText)
-
-    // One retry only when the model returns an invalid payload.
-    if (!parsed) {
-      diagnostics.retriedParse = true
-      const retryRes = await callDeepSeek(
-        `${prompt}\n\nPOPRAWKA: odpowiedz musi byc jednym obiektem JSON bez markdown i bez dodatkowego tekstu.`,
-        maxTokens,
-      )
-      diagnostics.deepseekStatus = retryRes.status
-      if (retryRes.ok) {
-        const retryData = await retryRes.json()
-        const retryRawText = retryData.choices?.[0]?.message?.content || '{}'
-        parsed = parseJsonObject(retryRawText)
-      }
-    }
-
-    if (!parsed) {
-      diagnostics.usedRepairPass = true
-      const repairRes = await repairJsonWithDeepSeek(rawText, maxTokens)
-      diagnostics.deepseekStatus = repairRes.status
-      if (repairRes.ok) {
-        const repairData = await repairRes.json()
-        const repairedRawText = repairData.choices?.[0]?.message?.content || '{}'
-        parsed = parseJsonObject(repairedRawText)
-      }
-    }
-
-    if (!parsed) parsed = {}
-    diagnostics.parseOk = Object.keys(parsed).length > 0
-    if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed'
-
     if (hasGooglePlaces) {
-      const { enriched, localGems } = normalizeEnrichedResult({ parsed, googlePlaces, posts })
+      // Enrich Google places in small parallel chunks so each DeepSeek
+      // response stays within the token budget and parses reliably.
+      const chunks = chunkArray(googlePlaces, CHUNK_SIZE)
+      const chunkResults = await Promise.all(
+        chunks.map((chunk) => enrichGoogleChunk({ searchMode, profileLines, chunk })),
+      )
+      const enriched = chunkResults.flatMap((r) => r.enriched)
+      const fallbackChunks = chunkResults.filter((r) => !r.parseOk).length
 
-      // Safety fallback: keep Google results visible even if enrichment failed.
-      const safePlaces =
-        enriched.length > 0
-          ? enriched
-          : googlePlaces.map((p) => ({
-              ...p,
-              description: asString(p.description, 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.'),
-              whyThisGroup: 'Google zwrocil miejsce, ale AI nie wygenerowalo dopasowania.',
-              groupFitNote: 'AI: brak odpowiedzi',
-              bestTime: 'brak danych',
-              visitTips: 'brak danych',
-              reviewSummary: 'brak danych',
-              recentReviewHighlights: [] as string[],
-              tags: asArray<string>(p.tags),
-              estimatedCost: 'brak danych',
-              sourceCount: 0,
-              sentiment: 'brak danych',
-              authenticityNote: 'brak danych',
-              sources: [] as SourceLink[],
-            }))
+      // Local gems come from Reddit only, in a single separate call.
+      let localGems: any[] = []
+      if (posts.length > 0) {
+        const gems = await callAndParse(
+          buildRedditOnlyPrompt({ searchMode, profileLines, country, baseCity, posts, region, batch }),
+          1500,
+        )
+        if (gems.parsed) {
+          localGems = normalizeRedditPlaces(gems.parsed, posts).map((p) => ({ ...p, source: 'reddit' }))
+        }
+      }
+
+      diagnostics.deepseekStatus = chunkResults.some((r) => r.parseOk)
+        ? 200
+        : chunkResults[0]?.status ?? 0
+      diagnostics.parseOk = fallbackChunks === 0
+      if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed_partial'
 
       return NextResponse.json({
-        places: safePlaces,
+        places: enriched,
         localGems,
         postsAnalyzed: posts.length,
         meta: {
           ...diagnostics,
-          usedFallback: enriched.length === 0,
+          usedFallback: fallbackChunks > 0,
+          fallbackChunks,
+          totalChunks: chunks.length,
         },
       })
     }
+
+    // Reddit-only path (no Google places available).
+    const redditCall = await callAndParse(
+      buildRedditOnlyPrompt({ searchMode, profileLines, country, baseCity, posts, region, batch }),
+      1700,
+    )
+    diagnostics.deepseekStatus = redditCall.status
+    const parsed = redditCall.parsed ?? {}
+    diagnostics.parseOk = Object.keys(parsed).length > 0
+    if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed'
 
     const places = normalizeRedditPlaces(parsed, posts)
     return NextResponse.json({

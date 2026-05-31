@@ -58,7 +58,7 @@ async function geocodeCity(city: string, country: string): Promise<{ lat: number
 async function getPlaceDetails(placeId: string): Promise<any> {
   if (!GOOGLE_API_KEY) return {}
   try {
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=opening_hours,price_level,formatted_phone_number,website&key=${GOOGLE_API_KEY}`
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=opening_hours,price_level,formatted_phone_number,website,reviews,rating,user_ratings_total&key=${GOOGLE_API_KEY}&language=pl`
     const res = await fetch(url)
     if (!res.ok) return {}
     const data = await res.json()
@@ -124,20 +124,47 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Posortuj po odległości
-    places.sort((a, b) => a.distanceFromBase - b.distanceFromBase)
+    // Filtr jakości: tylko miejsca z solidną oceną i wystarczającą liczbą opinii
+    const MIN_RATING = 4.3
+    const MIN_REVIEWS = 15
+    const quality = places.filter(
+      (p) =>
+        typeof p.googleRating === 'number' &&
+        p.googleRating >= MIN_RATING &&
+        typeof p.googleTotalRatings === 'number' &&
+        p.googleTotalRatings >= MIN_REVIEWS,
+    )
 
-    // Pobierz szczegóły dla pierwszych 15 (godziny, strona, telefon)
-    const top = places.slice(0, 15)
+    // Sortuj pulę po jakości (ocena, potem liczba opinii) — wyświetlanie i tak
+    // sortuje front po odległości, tu chodzi tylko o to, kto wejdzie do puli.
+    quality.sort((a, b) => (b.googleRating - a.googleRating) || (b.googleTotalRatings - a.googleTotalRatings))
+
+    // Pobierz szczegóły dla topowych miejsc (godziny, strona, świeże opinie)
+    const top = quality.slice(0, 24)
     await Promise.all(top.map(async (p) => {
       const details = await getPlaceDetails(p.googlePlaceId)
       if (details.opening_hours?.open_now !== undefined) p.isOpen = details.opening_hours.open_now
       if (details.price_level !== undefined) p.priceLevel = details.price_level
       if (details.rating !== undefined) p.googleRating = details.rating
+      if (typeof details.user_ratings_total === 'number') p.googleTotalRatings = details.user_ratings_total
       if (details.website) p.website = details.website
+      if (Array.isArray(details.reviews) && details.reviews.length > 0) {
+        p.recentReviewHighlights = details.reviews
+          .slice()
+          .sort((a: any, b: any) => (b.time || 0) - (a.time || 0))
+          .slice(0, 3)
+          .map((r: any) => {
+            const text = String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+            if (!text) return ''
+            const stars = typeof r.rating === 'number' ? `⭐${r.rating} ` : ''
+            const when = r.relative_time_description ? ` (${r.relative_time_description})` : ''
+            return `${stars}„${text}”${when}`
+          })
+          .filter(Boolean)
+      }
     }))
 
-    return NextResponse.json({ places, baseLat: lat, baseLon: lon })
+    return NextResponse.json({ places: quality, baseLat: lat, baseLon: lon })
   } catch (err) {
     return NextResponse.json({ places: [], error: String(err) })
   }

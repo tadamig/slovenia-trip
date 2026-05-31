@@ -41,6 +41,19 @@ const REGION_TO_COUNTRY: Record<string, string> = {
 
 const CHUNK_SIZE = 5
 
+// Jedyne tagi, których używa UI (słownik aktywności). Wszystko spoza tej listy
+// (np. wymyślone przez AI "bar", "góry", "bistro") jest odrzucane.
+const KNOWN_TAGS = new Set([
+  'sup', 'trekking', 'food', 'sunset', 'sightseeing', 'relax',
+  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent',
+])
+
+function whitelistTags(...sources: unknown[]): string[] {
+  const merged = sources.flatMap((s) => asArray<string>(s))
+  const known = merged.filter((t) => typeof t === 'string' && KNOWN_TAGS.has(t))
+  return Array.from(new Set(known))
+}
+
 const transportLabels: Record<string, string> = {
   van: 'van/kamper',
   own_car: 'wlasny samochod',
@@ -330,8 +343,8 @@ function rawGoogleFallback(places: GooglePlace[]) {
     bestTime: 'brak danych',
     visitTips: 'brak danych',
     reviewSummary: 'brak danych',
-    recentReviewHighlights: [] as string[],
-    tags: asArray<string>(p.tags),
+    recentReviewHighlights: asArray<string>(p.recentReviewHighlights).slice(0, 3),
+    tags: whitelistTags(p.tags),
     estimatedCost: 'brak danych',
     sourceCount: 0,
     sentiment: 'brak danych',
@@ -399,10 +412,11 @@ function normalizeEnrichedResult(params: {
         bestTime: asString(item.bestTime),
         visitTips: asString(item.visitTips),
         reviewSummary: asString(item.reviewSummary),
-        recentReviewHighlights: asArray<string>(item.recentReviewHighlights).slice(0, 3),
-        tags: asArray<string>(item.tags).length
-          ? asArray<string>(item.tags)
-          : asArray<string>(gPlace.tags),
+        // Świeże opinie to prawdziwe recenzje z Google (na gPlace), nie wymysł AI.
+        recentReviewHighlights: asArray<string>(gPlace.recentReviewHighlights).length
+          ? asArray<string>(gPlace.recentReviewHighlights).slice(0, 3)
+          : asArray<string>(item.recentReviewHighlights).slice(0, 3),
+        tags: whitelistTags(gPlace.tags, item.tags),
         estimatedCost: asString(item.estimatedCost),
         sourceCount:
           typeof item.sourceCount === 'number' && item.sourceCount >= 0 ? item.sourceCount : 0,
@@ -423,7 +437,7 @@ function normalizeEnrichedResult(params: {
     visitTips: asString(place.visitTips),
     reviewSummary: asString(place.reviewSummary),
     recentReviewHighlights: asArray<string>(place.recentReviewHighlights).slice(0, 3),
-    tags: asArray<string>(place.tags),
+    tags: whitelistTags(place.tags),
     source: 'reddit',
     sourceCount:
       typeof place.sourceCount === 'number' && place.sourceCount >= 0 ? place.sourceCount : 0,
@@ -445,7 +459,7 @@ function normalizeRedditPlaces(parsed: Record<string, unknown>, posts: RedditPos
     visitTips: asString(place.visitTips),
     reviewSummary: asString(place.reviewSummary),
     recentReviewHighlights: asArray<string>(place.recentReviewHighlights).slice(0, 3),
-    tags: asArray<string>(place.tags),
+    tags: whitelistTags(place.tags),
     estimatedCost: asString(place.estimatedCost),
     sentiment: asString(place.sentiment),
     sourceCount:

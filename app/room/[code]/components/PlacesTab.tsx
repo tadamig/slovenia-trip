@@ -192,6 +192,15 @@ const COST_LABEL: Record<string, string> = {
   free: '🆓 Bezpłatne', cheap: '💸 Tanie', moderate: '💰 Średnie', expensive: '💎 Drogie',
 }
 
+// 1200 -> "1,2k", 50000 -> "50k"
+function formatCount(n: number): string {
+  if (n >= 1000) {
+    const k = n / 1000
+    return `${(n >= 10000 ? Math.round(k) : Math.round(k * 10) / 10).toString().replace('.', ',')}k`
+  }
+  return String(n)
+}
+
 const Slovenia_SPOTS = ['Bled', 'Bohinj', 'Soča', 'Ljubljana', 'Piran', 'Triglav', 'Kranjska Gora', 'Kobarid', 'Koper', 'Portorož']
 const BUDAPEST_SPOTS = ['Budapeszt', 'Buda', 'Pest', 'Óbuda']
 
@@ -358,7 +367,12 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
                 className="text-xs text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded-full border border-emerald-700/30 flex items-center gap-1 hover:bg-emerald-900/40 transition-colors"
               >
                 ✅ Google
-                {place.googleRating && <span className="font-semibold">⭐ {place.googleRating}</span>}
+                {place.googleRating != null && (
+                  <span className="font-semibold">
+                    ⭐ {place.googleRating}
+                    {place.googleTotalRatings ? ` (${formatCount(place.googleTotalRatings)})` : ''}
+                  </span>
+                )}
                 {place.isOpen === true && <span className="text-green-300">· Otwarte</span>}
                 {place.isOpen === false && <span className="text-red-300">· Zamknięte</span>}
               </a>
@@ -391,13 +405,13 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
 
       {/* Tags + cost */}
       <div className="flex flex-wrap gap-1.5">
-        {place.tags.map(tag => (
+        {(place.tags || []).filter(tag => ACTIVITY_TAGS[tag]).map(tag => (
           <span key={tag} className={`text-xs px-2 py-0.5 rounded-full ${
             groupActivities.includes(tag)
               ? 'bg-forest-800/40 text-forest-300 border border-forest-700/30'
               : 'bg-stone-800 text-stone-500 border border-stone-700/30'
           }`}>
-            {ACTIVITY_TAGS[tag] || tag}
+            {ACTIVITY_TAGS[tag]}
           </span>
         ))}
         {place.estimatedCost && (
@@ -422,13 +436,13 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
 
       {showDetails && (
         <div className="bg-stone-900/60 border border-stone-800/60 rounded-xl p-3 space-y-2 text-xs">
-          {place.distanceFromBase && (
+          {place.distanceFromBase != null && (
             <div className="flex items-center justify-between">
               <span className="text-stone-500">📍 Odległość od bazy</span>
               <span className="text-stone-300 font-medium">{place.distanceFromBase} km</span>
             </div>
           )}
-          {place.localityScore && (
+          {place.localityScore != null && place.localityScore > 0 && (
             <div className="flex items-center justify-between">
               <span className="text-stone-500">🏡 Lokalność</span>
               <div className="flex items-center gap-1">
@@ -442,12 +456,6 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
             <div>
               <span className="text-stone-500">✨ Autentyczność: </span>
               <span className="text-stone-400">{place.authenticityNote}</span>
-            </div>
-          )}
-          {place.estimatedCost && (
-            <div className="flex items-center justify-between">
-              <span className="text-stone-500">💰 Koszt</span>
-              <span className="text-stone-300">{COST_LABEL[place.estimatedCost] || place.estimatedCost}</span>
             </div>
           )}
           {place.groupFitNote && (
@@ -498,7 +506,7 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
               <span className="text-stone-400">{place.googleAddress}</span>
             </div>
           )}
-          {place.googleTotalRatings && (
+          {place.googleTotalRatings != null && place.googleTotalRatings > 0 && (
             <div className="flex items-center justify-between">
               <span className="text-stone-500">⭐ Google</span>
               <span className="text-stone-300">{place.googleRating}/5 ({place.googleTotalRatings} opinii)</span>

@@ -775,7 +775,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     if (discoverRes.status === 'fulfilled' && discoverRes.value.ok) {
       try {
         const gData = await discoverRes.value.json()
-        googlePlaces = (gData.places || []).slice(0, 40)
+        // Cap pilnuje backend (/api/places, MAX_ENRICH_PLACES). Tu bierzemy całą,
+        // już posortowaną pulę z silnika — liczba miejsc zależy od ilości znalezionych.
+        googlePlaces = (gData.places || []).slice(0, 60)
         fetchedBaseLat = gData.baseLat
         fetchedBaseLon = gData.baseLon
         if (fetchedBaseLat) setBaseLat(fetchedBaseLat)

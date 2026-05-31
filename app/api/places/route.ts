@@ -40,6 +40,32 @@ const REGION_TO_COUNTRY: Record<string, string> = {
 }
 
 const CHUNK_SIZE = 5
+// Górny bufor bezpieczeństwa — liczba wzbogacanych miejsc skaluje się z wejściem,
+// ale nigdy nie przekroczy tej wartości (chroni przed runaway, gdyby góra potoku
+// zwróciła setki miejsc). Frontend i tak podaje ~40.
+const MAX_ENRICH_PLACES = 60
+// Ile chunków DeepSeek leci równolegle. TO decyduje o obciążeniu, nie liczba miejsc.
+// Dzięki temu wydajność jest stała niezależnie od liczby wzbogacanych miejsc.
+const MAX_CONCURRENT_CHUNKS = 6
+
+// Przetwarza elementy z ograniczoną współbieżnością (max `limit` równolegle).
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (_item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor++
+      results[index] = await fn(items[index])
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  await Promise.all(workers)
+  return results
+}
 
 // Jedyne tagi, których używa UI (słownik aktywności). Wszystko spoza tej listy
 // (np. wymyślone przez AI "bar", "góry", "bistro") jest odrzucane.
@@ -486,9 +512,10 @@ export async function POST(request: NextRequest) {
     const batch = typeof body.batch === 'number' ? body.batch : 1
     const searchMode = normalizeMode(body.searchMode ?? body.mode)
     const maxPosts = searchMode === 'research' ? 28 : 20
-    const maxGooglePlaces = batch === 1 ? 16 : 10
     const posts = inputPosts.slice(0, maxPosts)
-    const googlePlaces = inputGooglePlaces.slice(0, maxGooglePlaces)
+    // Liczba wzbogacanych miejsc zależy od wejścia (nie sztywny limit), ograniczona
+    // jedynie buforem bezpieczeństwa. Współbieżność wywołań AI trzyma MAX_CONCURRENT_CHUNKS.
+    const googlePlaces = inputGooglePlaces.slice(0, MAX_ENRICH_PLACES)
     const diagnostics = {
       inputPosts: inputPosts.length,
       inputGooglePlaces: inputGooglePlaces.length,
@@ -534,8 +561,8 @@ export async function POST(request: NextRequest) {
       // Enrich Google places in small parallel chunks so each DeepSeek
       // response stays within the token budget and parses reliably.
       const chunks = chunkArray(googlePlaces, CHUNK_SIZE)
-      const chunkResults = await Promise.all(
-        chunks.map((chunk) => enrichGoogleChunk({ searchMode, profileLines, chunk })),
+      const chunkResults = await mapLimit(chunks, MAX_CONCURRENT_CHUNKS, (chunk) =>
+        enrichGoogleChunk({ searchMode, profileLines, chunk }),
       )
       const enriched = chunkResults.flatMap((r) => r.enriched)
       const fallbackChunks = chunkResults.filter((r) => !r.parseOk).length

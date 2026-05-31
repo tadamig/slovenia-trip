@@ -444,6 +444,16 @@ export async function POST(request: NextRequest) {
 
     // Dedup po place_id; zbieraj intencję aktywności + flagę curated
     const byId = new Map<string, DiscoverPlace>()
+    // Wtórny dedup po znormalizowanej nazwie — np. rzeka/feature, którą Google
+    // zwraca z RÓŻNYMI place_id z różnych zapytań (Ljubljanica), inaczej klonuje się.
+    const byName = new Map<string, string>()
+    const normName = (n: string) => n.toLowerCase().replace(/\s+/g, ' ').trim()
+    const mergeInto = (place: DiscoverPlace, query: { activity: string | null; curated: boolean }) => {
+      if (query.activity && !place.matchedActivities.includes(query.activity)) {
+        place.matchedActivities.push(query.activity)
+      }
+      if (query.curated) place.curated = true
+    }
     for (const { query, results } of searchResults) {
       for (const r of results) {
         if (!r.place_id) continue
@@ -460,12 +470,19 @@ export async function POST(request: NextRequest) {
 
         const existing = byId.get(r.place_id)
         if (existing) {
-          // wzbogać o kolejną dopasowaną aktywność / flagę curated
-          if (query.activity && !existing.matchedActivities.includes(query.activity)) {
-            existing.matchedActivities.push(query.activity)
-          }
-          if (query.curated) existing.curated = true
+          mergeInto(existing, query)
           continue
+        }
+
+        // ten sam obiekt pod inną nazwą-place_id (rzeka, park) → scal, nie dubluj
+        const nameKey = normName(name)
+        const dupId = nameKey ? byName.get(nameKey) : undefined
+        if (dupId) {
+          const dup = byId.get(dupId)
+          if (dup) {
+            mergeInto(dup, query)
+            continue
+          }
         }
 
         const typeTags = googleTypesToTags(types)
@@ -495,6 +512,7 @@ export async function POST(request: NextRequest) {
           matchedActivities: matched,
           score: 0,
         })
+        if (nameKey) byName.set(nameKey, r.place_id)
       }
     }
 

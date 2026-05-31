@@ -931,8 +931,22 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     return (b.score ?? 0) - (a.score ?? 0) ||
       (a.distanceFromBase ?? Infinity) - (b.distanceFromBase ?? Infinity)
   })
-  const matchingPlaces = filteredPlaces.filter(p => (p.tags || []).some(t => groupActivities.includes(t)))
-  const otherPlaces = filteredPlaces.filter(p => !(p.tags || []).some(t => groupActivities.includes(t)))
+  // Defensywny dedup po stabilnym kluczu (place_id lub nazwa) — chroni przed
+  // duplikatami z różnych źródeł/etapów (np. rzeka z wieloma place_id, quick+enriched).
+  const placeKey = (p: AIPlace) => (p.googlePlaceId || p.name || '').toString().toLowerCase().trim()
+  const dedupedPlaces = (() => {
+    const seen = new Set<string>()
+    const out: AIPlace[] = []
+    for (const p of filteredPlaces) {
+      const k = placeKey(p)
+      if (k && seen.has(k)) continue
+      if (k) seen.add(k)
+      out.push(p)
+    }
+    return out
+  })()
+  const matchingPlaces = dedupedPlaces.filter(p => (p.tags || []).some(t => groupActivities.includes(t)))
+  const otherPlaces = dedupedPlaces.filter(p => !(p.tags || []).some(t => groupActivities.includes(t)))
 
   return (
     <div className="px-4 py-5 max-w-lg mx-auto space-y-5">
@@ -1140,7 +1154,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
               </p>
               {matchingPlaces.map(place => (
                 <PlaceCard
-                  key={place.name}
+                  key={placeKey(place)}
                   place={place}
                   groupActivities={groupActivities}
                   isSaved={savedPlaces.some(s => s.place_name === place.name)}
@@ -1166,7 +1180,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
               {showAll && (
                 <div className="space-y-3 mt-3">
                   {otherPlaces.map(place => (
-                    <PlaceCard key={place.name} place={place} groupActivities={groupActivities}
+                    <PlaceCard key={placeKey(place)} place={place} groupActivities={groupActivities}
                       isSaved={savedPlaces.some(s => s.place_name === place.name)}
                       onSave={() => savePlace(place)}
                       savedData={savedPlaces.find(s => s.place_name === place.name)}

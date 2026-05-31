@@ -82,7 +82,7 @@ const EXCLUDE_TYPES = new Set([
 ])
 
 // Nazwy zdradzające usługę (wypożyczalnia / sklep / wynajem)
-const RENTAL_NAME_RE = /\b(rental|rent[ -]?a|hire|wypożyczaln|rent center|outfitter|equipment|sklep|store|shop)\b/i
+const RENTAL_NAME_RE = /\b(rent|rents|rental|rentals|hire|wypożyczaln|outfitter|equipment|sklep|store|shop)\b/i
 
 // Aktywności, dla których wypożyczalnie są typowym szumem
 const GEAR_ACTIVITIES = new Set(['sup', 'trekking', 'cycling', 'van', 'tent'])

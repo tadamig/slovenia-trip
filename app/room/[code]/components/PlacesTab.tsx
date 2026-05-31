@@ -12,39 +12,6 @@ function countryToRegion(country: string): string {
   return 'europe' // fallback — Europa ogólnie
 }
 
-// Deterministyczne zapytania Google budowane lokalnie — bez czekania na DeepSeek.
-const ACTIVITY_QUERY_TEMPLATES: Record<string, string[]> = {
-  sup: ['SUP rental', 'paddleboarding spot', 'kayak rental'],
-  trekking: ['hiking trail', 'best hike', 'nature walk', 'scenic viewpoint hike'],
-  food: ['best local restaurant', 'traditional food', 'top rated restaurant'],
-  sunset: ['best sunset viewpoint', 'scenic viewpoint'],
-  sightseeing: ['top attractions', 'must see sights', 'historic landmark'],
-  relax: ['spa', 'thermal bath', 'wellness'],
-  photo: ['most photogenic spot', 'instagram spot'],
-  markets: ['local market', 'farmers market'],
-  nightlife: ['best bar', 'nightlife', 'pub'],
-  cycling: ['bike trail', 'cycling route'],
-  van: ['campsite', 'camper stop'],
-  tent: ['campground', 'camping'],
-}
-
-function buildGoogleQueries(
-  activities: string[], baseCity: string, country: string, mode: SearchMode
-): string[] {
-  const place = baseCity || country || 'Slovenia'
-  const acts = activities.length > 0 ? activities : ['sightseeing', 'food']
-  const queries: string[] = []
-  for (const a of acts) {
-    const templates = ACTIVITY_QUERY_TEMPLATES[a] || [a]
-    for (const t of templates) queries.push(`${t} ${place}`)
-  }
-  queries.push(`things to do ${place}`, `${country || place} hidden gem`, `top rated ${place}`)
-  if (mode === 'research') {
-    queries.push(`local secret spot ${place}`, `off the beaten path ${country || place}`)
-  }
-  return Array.from(new Set(queries)).slice(0, 15)
-}
-
 const SUBREDDIT_BLACKLIST = new Set([
   'leopardsatemyface','politics','worldnews','news','conspiracy','memes','funny',
   'gaming','sports','nfl','nba','soccer','movies','television','music','stocks',
@@ -175,6 +142,9 @@ interface AIPlace {
   address?: string
   website?: string
   source?: 'google' | 'reddit' // skąd pochodzi
+  score?: number // ranking silnika /api/discover (0–100)
+  curated?: boolean // czy pochodzi z kuracji DeepSeek
+  matchedActivities?: string[]
   redditSources?: { title: string; url: string; score: number; subreddit: string }[]
   sources?: { title: string; url: string; score: number; subreddit: string }[]
 }
@@ -615,6 +585,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [activeSource, setActiveSource] = useState<'google' | 'reddit'>('google')
   const [searchMode, setSearchMode] = useState<SearchMode>('standard')
+  const [radiusKm, setRadiusKm] = useState(40)
+  const [sortBy, setSortBy] = useState<'match' | 'rating' | 'distance'>('match')
   const [loadingMore, setLoadingMore] = useState(false)
   const [enriching, setEnriching] = useState(false)
   const [error, setError] = useState('')
@@ -729,23 +701,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoadingMore(false)
   }
 
-  function getRadius(city: string, country: string): number {
-    const c = (city + country).toLowerCase()
-    if (c.includes('lake') || c.includes('lago') || c.includes('jezioro') ||
-        c.includes('slovenia') || c.includes('croatia') || c.includes('hungary')) return 80
-    return 40
-  }
-
-  function isAlreadyInGoogle(name: string, googlePlaces: AIPlace[]): AIPlace | null {
-    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const n = normalize(name)
-    return googlePlaces.find(p => {
-      const pn = normalize(p.name)
-      return pn === n || pn.includes(n) || n.includes(pn) ||
-        (n.length > 5 && pn.length > 5 && (pn.includes(n.slice(0, 6)) || n.includes(pn.slice(0, 6))))
-    }) || null
-  }
-
   async function handleSearch() {
     setLoading(true)
     setEnriching(false)
@@ -760,7 +715,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setSearchCount(c => c + 1)
 
     const region = countryToRegion(room.country || 'Slovenia')
-    const radius = getRadius(room.end_city || '', room.country || '')
+    const radius = radiusKm
     const tripDaysCalc = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
@@ -775,14 +730,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       tripDays: tripDaysCalc, month: monthCalc,
     }
 
-    // Krok 1: zapytania Google budujemy lokalnie (bez DeepSeek), zeby nie blokowac startu.
+    // Krok 1: silnik /api/discover (kuracja DeepSeek → weryfikacja Google → ranking)
+    // zastępuje lokalne budowanie zapytań. Reddit leci równolegle (lokalne perełki).
     setScanPhase(0)
-    const googleQueries = buildGoogleQueries(groupActivities, room.end_city || '', room.country || '', searchMode)
-
     setScanPhase(1)
 
-    // Krok 2: Google Places startuje natychmiast; Reddit (z DeepSeek query-gen) leci
-    // rownolegle i nie blokuje pokazania kart Google.
     let googlePlaces: any[] = []
     let posts: any[] = []
     let redditMeta: any = null
@@ -808,18 +760,22 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       )
     })()
 
-    const [googleRes, redditRes] = await Promise.allSettled([
-      fetch('/api/google-places', {
+    const [discoverRes, redditRes] = await Promise.allSettled([
+      fetch('/api/discover', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queries: googleQueries, baseCity: room.end_city || '', country: room.country || '', radius }),
+        body: JSON.stringify({
+          baseCity: room.end_city || '', country: room.country || '',
+          activities: groupActivities, radius, sort: sortBy,
+          intensity: myPrefs.intensity, numPeople: room.num_people || 4,
+        }),
       }),
       redditTask,
     ])
 
-    if (googleRes.status === 'fulfilled' && googleRes.value.ok) {
+    if (discoverRes.status === 'fulfilled' && discoverRes.value.ok) {
       try {
-        const gData = await googleRes.value.json()
-        googlePlaces = (gData.places || []).slice(0, 25)
+        const gData = await discoverRes.value.json()
+        googlePlaces = (gData.places || []).slice(0, 40)
         fetchedBaseLat = gData.baseLat
         fetchedBaseLon = gData.baseLon
         if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
@@ -848,7 +804,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         reviewSummary: p.reviewSummary || 'brak danych',
         recentReviewHighlights: p.recentReviewHighlights || [],
       }))
-      setAiPlaces(quickPlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
+      setAiPlaces(quickPlaces)
       setResultsVisible(true)
       setLoading(false)
     }
@@ -910,7 +866,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         setFadingOut(true)
         await new Promise(r => setTimeout(r, 400))
       }
-      setAiPlaces(enrichedPlaces.sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
+      // Silnik /api/discover zwraca już pełną, posortowaną pulę — warstwa
+      // wyświetlania (filteredPlaces) sortuje wg wybranego trybu.
+      setAiPlaces(enrichedPlaces)
       setLocalGems(newLocalGems)
       setLoading(false)
       setEnriching(false)
@@ -919,46 +877,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       setResultsVisible(true)
 
       await saveRecommendations(enrichedPlaces, posts.length)
-
-      // W tle: kolejne Google Places batche
-      ;(async () => {
-        if (!googleQueries.length) return
-        let allPlaces = [...enrichedPlaces]
-        for (let i = 10; i < googleQueries.length; i += 8) {
-          if (allPlaces.length >= 50) break
-          try {
-            const res = await fetch('/api/google-places', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ queries: googleQueries.slice(i, i + 8), baseCity: room.end_city || '', country: room.country || '', baseLat: fetchedBaseLat, baseLon: fetchedBaseLon, radius }),
-            })
-            if (!res.ok) continue
-            const gData = await res.json()
-            const newGooglePlaces = (gData.places || []).filter((np: any) => !allPlaces.find(ep => ep.googlePlaceId === np.googlePlaceId))
-            if (!newGooglePlaces.length) continue
-
-            // Wzbogać nowe miejsca
-            const enrichRes2 = await fetch('/api/places', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ posts, googlePlaces: newGooglePlaces, activities: groupActivities, region, searchMode, baseCity: room.end_city || '', transport: myPrefs.transport, accommodation: myPrefs.accommodation, intensity: myPrefs.intensity, numPeople: room.num_people || 4, startDate: room.start_date, endDate: room.end_date, tripDays: tripDaysCalc, batch: 2 }),
-            })
-            if (!enrichRes2.ok) continue
-            const eData = await enrichRes2.json()
-            const morePlaces = (eData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-            const moreGems = (eData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-
-            for (const place of morePlaces) {
-              await new Promise(r => setTimeout(r, 80))
-              allPlaces = [...allPlaces, place]
-              setAiPlaces(prev => [...prev, place].sort((a, b) => (a.distanceFromBase || 0) - (b.distanceFromBase || 0)))
-            }
-            setLocalGems(prev => {
-              const existing = new Set(prev.map(p => p.name))
-              return [...prev, ...moreGems.filter((g: AIPlace) => !existing.has(g.name))]
-            })
-          } catch {}
-        }
-        await saveRecommendations(allPlaces, posts.length)
-      })()
 
     } catch (e) {
       setError('Nie udalo sie pobrac rekomendacji. Sprawdz polaczenie.')
@@ -999,6 +917,17 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     const regionOk = activeRegion === 'all' || p.region === activeRegion
     const tagOk = activeTag === null || p.tags.includes(activeTag)
     return regionOk && tagOk
+  }).slice().sort((a, b) => {
+    if (sortBy === 'rating') {
+      return (b.googleRating ?? 0) - (a.googleRating ?? 0) ||
+        (b.googleTotalRatings ?? 0) - (a.googleTotalRatings ?? 0)
+    }
+    if (sortBy === 'distance') {
+      return (a.distanceFromBase ?? Infinity) - (b.distanceFromBase ?? Infinity)
+    }
+    // 'match' — wg wyniku silnika (score), z fallbackiem na odległość
+    return (b.score ?? 0) - (a.score ?? 0) ||
+      (a.distanceFromBase ?? Infinity) - (b.distanceFromBase ?? Infinity)
   })
   const matchingPlaces = filteredPlaces.filter(p => (p.tags || []).some(t => groupActivities.includes(t)))
   const otherPlaces = filteredPlaces.filter(p => !(p.tags || []).some(t => groupActivities.includes(t)))
@@ -1060,6 +989,49 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
               ? 'Tryb standard: sprawdzone i popularne miejsca + AI podsumowanie dla całej ekipy.'
               : 'Tryb research: mocniejszy nacisk na lokalne perełki i mniej oczywiste rekomendacje.'}
           </p>
+        </div>
+      )}
+
+      {/* Promień + sortowanie */}
+      {!loading && (
+        <div className="bg-stone-900/40 border border-stone-700/40 rounded-xl p-3 space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs text-stone-400 font-medium">📍 Promień wyszukiwania</label>
+              <span className="text-xs text-water-300 font-semibold">{radiusKm} km</span>
+            </div>
+            <input
+              type="range" min={30} max={80} step={5}
+              value={radiusKm}
+              onChange={e => setRadiusKm(Number(e.target.value))}
+              className="w-full accent-water-500 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-stone-600 mt-0.5">
+              <span>30 km</span><span>80 km</span>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-stone-400 font-medium block mb-1.5">↕️ Sortuj wyniki</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {([
+                ['match', 'Najlepsze dopasowanie'],
+                ['rating', 'Ocena'],
+                ['distance', 'Odległość'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setSortBy(key)}
+                  className={`px-2 py-2 rounded-lg text-[11px] font-medium border transition-all ${
+                    sortBy === key
+                      ? 'bg-forest-900/40 border-forest-600/40 text-forest-300'
+                      : 'bg-stone-800/40 border-stone-700/40 text-stone-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

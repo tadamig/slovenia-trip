@@ -1,0 +1,578 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+
+export const maxDuration = 60
+
+const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY
+
+// Cache (Supabase) — wyniki silnika zmieniają się wolno, więc cache'ujemy pulę.
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000 // 12h
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim()
+const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim()
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+
+// ——————————————————————————————————————————————
+// Typy
+// ——————————————————————————————————————————————
+type SortMode = 'match' | 'rating' | 'distance'
+
+type Candidate = {
+  name: string
+  activity: string
+  area?: string
+}
+
+type DiscoverPlace = {
+  name: string
+  googlePlaceId: string
+  lat: number
+  lon: number
+  googleRating?: number
+  googleTotalRatings?: number
+  address?: string
+  types: string[]
+  tags: string[]
+  distanceFromBase: number
+  priceLevel?: number
+  verified: boolean
+  source: 'google'
+  isOpen?: boolean | null
+  website?: string
+  recentReviewHighlights?: string[]
+  curated: boolean
+  matchedActivities: string[]
+  score: number
+}
+
+// ——————————————————————————————————————————————
+// Słownik aktywności = jedyne dozwolone tagi (zgodne z UI)
+// ——————————————————————————————————————————————
+const KNOWN_ACTIVITIES = new Set([
+  'sup', 'trekking', 'food', 'sunset', 'sightseeing', 'relax',
+  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent',
+])
+
+// Destynacje (NIE usługi) — zapytania nastawione na cele podróży,
+// a nie wypożyczalnie/sklepy.
+const ACTIVITY_DEST_QUERIES: Record<string, string[]> = {
+  sup: ['lake to swim', 'beach', 'natural swimming spot'],
+  trekking: ['hiking trail', 'gorge waterfall trail', 'mountain viewpoint trail'],
+  food: ['best traditional restaurant', 'top rated local restaurant'],
+  sunset: ['sunset viewpoint', 'panoramic viewpoint'],
+  sightseeing: ['castle', 'old town landmark', 'must see attraction'],
+  relax: ['thermal spa', 'wellness retreat'],
+  photo: ['scenic photo spot', 'most photogenic viewpoint'],
+  markets: ['farmers market', 'local market'],
+  nightlife: ['popular bar', 'nightlife club'],
+  cycling: ['scenic cycling route', 'bike path nature'],
+  van: ['campsite for campervan', 'panoramic camper stop'],
+  tent: ['campground nature', 'tent camping site'],
+}
+
+// Typy Google, które są usługami/sklepami — nie chcemy ich jako "atrakcji"
+const EXCLUDE_TYPES = new Set([
+  'car_rental', 'car_repair', 'car_dealer', 'bicycle_store', 'store',
+  'clothing_store', 'shoe_store', 'electronics_store', 'hardware_store',
+  'furniture_store', 'home_goods_store', 'convenience_store', 'supermarket',
+  'travel_agency', 'storage', 'moving_company', 'real_estate_agency',
+  'insurance_agency', 'finance', 'bank', 'atm', 'gas_station', 'parking',
+  'laundry', 'gym', 'beauty_salon', 'hair_care', 'dentist', 'doctor',
+  'pharmacy', 'lawyer', 'accounting', 'plumber', 'electrician',
+])
+
+// Nazwy zdradzające usługę (wypożyczalnia / sklep / wynajem)
+const RENTAL_NAME_RE = /\b(rental|rent[ -]?a|hire|wypożyczaln|rent center|outfitter|equipment|sklep|store|shop)\b/i
+
+// Aktywności, dla których wypożyczalnie są typowym szumem
+const GEAR_ACTIVITIES = new Set(['sup', 'trekking', 'cycling', 'van', 'tent'])
+
+// ——————————————————————————————————————————————
+// Helpers
+// ——————————————————————————————————————————————
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
+function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+function googleTypesToTags(types: string[]): string[] {
+  const tags: string[] = []
+  const has = (v: string) => types.includes(v)
+  if (has('restaurant') || has('cafe') || has('bakery') || has('food')) tags.push('food')
+  if (has('bar') || has('night_club')) tags.push('nightlife')
+  if (has('museum') || has('tourist_attraction') || has('church') || has('art_gallery')) tags.push('sightseeing')
+  if (has('park') || has('natural_feature') || has('campground')) tags.push('trekking')
+  if (has('spa')) tags.push('relax')
+  return Array.from(new Set(tags))
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  if (!raw) return null
+  const base = raw.replace(/```json|```/gi, '').trim()
+  const candidates = [base]
+  const start = base.indexOf('{')
+  const end = base.lastIndexOf('}')
+  if (start >= 0 && end > start) candidates.push(base.slice(start, end + 1))
+  for (const c of candidates) {
+    const normalized = c
+      .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+      .replace(/,\s*([}\]])/g, '$1').replace(/\u0000/g, '').trim()
+    try { return JSON.parse(normalized) } catch { /* spróbuj następny */ }
+  }
+  return null
+}
+
+// ——————————————————————————————————————————————
+// Layer 1 — KURACJA (DeepSeek): konkretne nazwane destynacje
+// ——————————————————————————————————————————————
+function buildCurationPrompt(params: {
+  baseCity: string
+  country: string
+  radius: number
+  activities: string[]
+  intensity?: string
+  numPeople?: number
+}): string {
+  const { baseCity, country, radius, activities, intensity, numPeople } = params
+  const acts = activities.length ? activities : ['sightseeing', 'food']
+  const actList = acts.join(', ')
+  return [
+    `Jesteś ekspertem od podróży po regionie: ${country || 'Słowenia'}.`,
+    `Grupa (${numPeople || 4} os., tempo: ${intensity || 'zbalansowane'}) startuje z: ${baseCity || country}.`,
+    `Wypisz KONKRETNE, NAZWANE z imienia atrakcje/destynacje w promieniu ok. ${radius} km od ${baseCity || country}.`,
+    `Aktywności grupy: ${actList}.`,
+    '',
+    'ZASADY:',
+    '- Podawaj CELE PODRÓŻY, nie usługi. Np. dla "sup" → konkretne jezioro/plaża gdzie się pływa (NIE wypożyczalnia SUP).',
+    '- Dla "trekking" → nazwany szlak/wąwóz/szczyt/wodospad. Dla "markets" → nazwany targ. Dla "food" → konkretna ceniona restauracja.',
+    '- Tylko realne, istniejące miejsca, które łatwo znaleźć w Google Maps. Używaj oficjalnych/lokalnych nazw.',
+    '- Bazuj na znanych rankingach/blogach ("top 10 szlaków", "najlepsze jeziora") — wybieraj sprawdzone, wysoko oceniane miejsca.',
+    `- Dla KAŻDEJ aktywności podaj 6-8 różnych miejsc. Łącznie maksymalnie 40.`,
+    '- Pole "activity" musi być dokładnie jednym z: ' + Array.from(KNOWN_ACTIVITIES).join(', ') + '.',
+    '',
+    'Zwróć WYŁĄCZNIE jeden obiekt JSON w formacie:',
+    '{"candidates":[{"name":"oficjalna nazwa miejsca","activity":"trekking","area":"okolica/miasto"}]}',
+  ].join('\n')
+}
+
+async function curate(params: {
+  baseCity: string
+  country: string
+  radius: number
+  activities: string[]
+  intensity?: string
+  numPeople?: number
+}): Promise<Candidate[]> {
+  if (!DEEPSEEK_API_KEY) return []
+  const prompt = buildCurationPrompt(params)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 40000)
+  try {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 1800,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'Zawsze zwracasz tylko jeden poprawny obiekt JSON.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    const parsed = parseJsonObject(data.choices?.[0]?.message?.content || '{}')
+    const raw = asArray<any>(parsed?.candidates)
+    const seen = new Set<string>()
+    const out: Candidate[] = []
+    for (const c of raw) {
+      const name = typeof c?.name === 'string' ? c.name.trim() : ''
+      const activity = typeof c?.activity === 'string' ? c.activity.trim().toLowerCase() : ''
+      if (!name || !KNOWN_ACTIVITIES.has(activity)) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ name, activity, area: typeof c?.area === 'string' ? c.area : undefined })
+      if (out.length >= 40) break
+    }
+    return out
+  } catch {
+    return []
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+// ——————————————————————————————————————————————
+// Layer 2 — WERYFIKACJA (Google Places)
+// ——————————————————————————————————————————————
+async function geocodeCity(city: string, country: string): Promise<{ lat: number; lon: number } | null> {
+  if (!GOOGLE_API_KEY) return null
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${city}, ${country}`)}&key=${GOOGLE_API_KEY}`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = await res.json()
+    const loc = data.results?.[0]?.geometry?.location
+    return loc ? { lat: loc.lat, lon: loc.lng } : null
+  } catch {
+    return null
+  }
+}
+
+async function textSearch(query: string, lat: number, lon: number, radius: number): Promise<any[]> {
+  if (!GOOGLE_API_KEY) return []
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&location=${lat},${lon}&radius=${radius * 1000}&key=${GOOGLE_API_KEY}&language=en`
+    const res = await fetch(url)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.results || []
+  } catch {
+    return []
+  }
+}
+
+async function getPlaceDetails(placeId: string): Promise<any> {
+  if (!GOOGLE_API_KEY) return {}
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=opening_hours,price_level,website,reviews,rating,user_ratings_total&key=${GOOGLE_API_KEY}&language=pl`
+    const res = await fetch(url)
+    if (!res.ok) return {}
+    const data = await res.json()
+    return data.result || {}
+  } catch {
+    return {}
+  }
+}
+
+// Limituj równoległość, by nie zalać API
+async function mapLimit<T, R>(items: T[], limit: number, fn: (_item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let i = 0
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++
+      results[idx] = await fn(items[idx])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+function isExcludedPlace(types: string[], name: string, intendedActivity: string | null): boolean {
+  // Nigdy nie wykluczaj na podstawie typów, gdy to restauracja/atrakcja itd.
+  const hasExcludedType = types.some((t) => EXCLUDE_TYPES.has(t))
+  if (hasExcludedType) {
+    // Restauracje/atrakcje mogą współdzielić "store"/"point_of_interest" — chroń realne cele
+    const isRealDest = types.some((t) =>
+      ['restaurant', 'cafe', 'bar', 'tourist_attraction', 'museum', 'park',
+        'natural_feature', 'campground', 'spa', 'church', 'art_gallery',
+        'lodging', 'food'].includes(t))
+    if (!isRealDest) return true
+  }
+  // Wypożyczalnie/sklepy po nazwie — odrzucaj zwłaszcza dla aktywności sprzętowych
+  if (RENTAL_NAME_RE.test(name)) {
+    if (!intendedActivity || GEAR_ACTIVITIES.has(intendedActivity)) return true
+  }
+  return false
+}
+
+// ——————————————————————————————————————————————
+// Layer 3 — RANKING (ważony scoring)
+// ——————————————————————————————————————————————
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n))
+}
+
+function computeScore(p: {
+  googleRating?: number
+  googleTotalRatings?: number
+  distanceFromBase: number
+  matchedActivities: string[]
+  curated: boolean
+  radius: number
+}): number {
+  const ratingScore = clamp01(((p.googleRating ?? 4.3) - 4.3) / (5 - 4.3))
+  const reviews = p.googleTotalRatings ?? 0
+  const popularityScore = clamp01(Math.log10(reviews + 1) / Math.log10(5000))
+  const proximityScore = clamp01(1 - p.distanceFromBase / Math.max(1, p.radius))
+  const activityScore = p.matchedActivities.length > 0
+    ? clamp01(0.6 + 0.2 * p.matchedActivities.length)
+    : 0.3
+  const curatedBonus = p.curated ? 1 : 0
+  const score =
+    0.40 * activityScore +
+    0.20 * ratingScore +
+    0.15 * popularityScore +
+    0.15 * proximityScore +
+    0.10 * curatedBonus
+  return Math.round(score * 1000) / 10 // 0–100, 1 miejsce po przecinku
+}
+
+function sortPlaces(list: DiscoverPlace[], sort: SortMode): DiscoverPlace[] {
+  const arr = list.slice()
+  if (sort === 'rating') {
+    arr.sort((a, b) =>
+      (b.googleRating ?? 0) - (a.googleRating ?? 0) ||
+      (b.googleTotalRatings ?? 0) - (a.googleTotalRatings ?? 0))
+  } else if (sort === 'distance') {
+    arr.sort((a, b) => a.distanceFromBase - b.distanceFromBase)
+  } else {
+    arr.sort((a, b) => b.score - a.score)
+  }
+  return arr
+}
+
+// ——————————————————————————————————————————————
+// Cache (Supabase) — klucz pomija "sort" (sortowanie aplikujemy przy odczycie)
+// ——————————————————————————————————————————————
+function buildCacheKey(p: { baseCity: string; country: string; radius: number; activities: string[] }): string {
+  const acts = p.activities.slice().sort().join(',')
+  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}`
+}
+
+async function readCache(key: string): Promise<{ places: DiscoverPlace[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
+  if (!supabase) return null
+  try {
+    const { data } = await supabase
+      .from('discover_cache')
+      .select('payload, created_at')
+      .eq('cache_key', key)
+      .maybeSingle()
+    if (!data) return null
+    const age = Date.now() - new Date(data.created_at as string).getTime()
+    if (age > CACHE_TTL_MS) return null
+    return data.payload as any
+  } catch {
+    return null
+  }
+}
+
+async function writeCache(key: string, payload: Record<string, unknown>): Promise<void> {
+  if (!supabase) return
+  try {
+    await supabase
+      .from('discover_cache')
+      .upsert({ cache_key: key, payload, created_at: new Date().toISOString() }, { onConflict: 'cache_key' })
+  } catch {
+    /* cache best-effort */
+  }
+}
+
+// ——————————————————————————————————————————————
+// POST
+// ——————————————————————————————————————————————
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const baseCity: string = body.baseCity || ''
+    const country: string = body.country || ''
+    const rawActivities: string[] = asArray<string>(body.activities)
+    const activities = rawActivities.filter((a) => KNOWN_ACTIVITIES.has(a))
+    const radius: number = Math.max(10, Math.min(80, Number(body.radius) || 40))
+    const sort: SortMode = ['match', 'rating', 'distance'].includes(body.sort) ? body.sort : 'match'
+
+    if (!GOOGLE_API_KEY) return NextResponse.json({ places: [], error: 'No Google API key' })
+
+    // Geokoduj bazę
+    let lat: number | null = Number(body.baseLat) || null
+    let lon: number | null = Number(body.baseLon) || null
+    if (!lat || !lon) {
+      const coords = await geocodeCity(baseCity, country)
+      if (!coords) return NextResponse.json({ places: [], error: 'Geocode failed' })
+      lat = coords.lat
+      lon = coords.lon
+    }
+
+    const effActivities = activities.length ? activities : ['sightseeing', 'food']
+
+    // Cache: jeśli świeży wynik dla (kraj, miasto, promień, aktywności) — zwróć,
+    // re-sortując wg bieżącego wyboru (sort nie wchodzi do klucza).
+    const cacheKey = buildCacheKey({ baseCity, country, radius, activities: effActivities })
+    const cached = await readCache(cacheKey)
+    if (cached && Array.isArray(cached.places)) {
+      return NextResponse.json({
+        places: sortPlaces(cached.places, sort),
+        baseLat: cached.baseLat ?? lat,
+        baseLon: cached.baseLon ?? lon,
+        meta: { ...(cached.meta || {}), sort, cached: true },
+      })
+    }
+
+    // Layer 1: kuracja (DeepSeek) — równolegle z budowaniem zapytań destynacyjnych
+    const curated = await curate({
+      baseCity, country, radius,
+      activities: effActivities,
+      intensity: body.intensity,
+      numPeople: body.numPeople,
+    })
+
+    // Layer 2: zbuduj listę zapytań textsearch
+    // (a) skuratowane nazwy + (b) zapytania destynacyjne per aktywność
+    type Query = { q: string; activity: string | null; curated: boolean }
+    const queries: Query[] = []
+    for (const c of curated) {
+      queries.push({ q: `${c.name} ${c.area || ''} ${country}`.trim(), activity: c.activity, curated: true })
+    }
+    for (const a of effActivities) {
+      const templates = ACTIVITY_DEST_QUERIES[a] || []
+      for (const t of templates.slice(0, 2)) {
+        queries.push({ q: `${t} near ${baseCity || country}`, activity: a, curated: false })
+      }
+    }
+
+    // Wykonaj wyszukiwania z ograniczoną równoległością
+    const searchResults = await mapLimit(queries, 6, async (query) => {
+      const results = await textSearch(query.q, lat!, lon!, radius)
+      return { query, results }
+    })
+
+    // Dedup po place_id; zbieraj intencję aktywności + flagę curated
+    const byId = new Map<string, DiscoverPlace>()
+    for (const { query, results } of searchResults) {
+      for (const r of results) {
+        if (!r.place_id) continue
+        const placeLat = r.geometry?.location?.lat
+        const placeLon = r.geometry?.location?.lng
+        if (typeof placeLat !== 'number' || typeof placeLon !== 'number') continue
+
+        const distance = Math.round(distanceKm(lat!, lon!, placeLat, placeLon))
+        if (distance > radius) continue // twardy limit promienia
+
+        const types: string[] = r.types || []
+        const name: string = r.name || ''
+        if (isExcludedPlace(types, name, query.activity)) continue
+
+        const existing = byId.get(r.place_id)
+        if (existing) {
+          // wzbogać o kolejną dopasowaną aktywność / flagę curated
+          if (query.activity && !existing.matchedActivities.includes(query.activity)) {
+            existing.matchedActivities.push(query.activity)
+          }
+          if (query.curated) existing.curated = true
+          continue
+        }
+
+        const typeTags = googleTypesToTags(types)
+        const matched: string[] = []
+        if (query.activity) matched.push(query.activity)
+        for (const t of typeTags) {
+          if (effActivities.includes(t) && !matched.includes(t)) matched.push(t)
+        }
+        const tags = Array.from(new Set([...matched, ...typeTags])).filter((t) => KNOWN_ACTIVITIES.has(t))
+
+        byId.set(r.place_id, {
+          name,
+          googlePlaceId: r.place_id,
+          lat: placeLat,
+          lon: placeLon,
+          googleRating: r.rating,
+          googleTotalRatings: r.user_ratings_total,
+          address: r.formatted_address,
+          types,
+          tags: tags.length ? tags : (query.activity ? [query.activity] : ['sightseeing']),
+          distanceFromBase: distance,
+          priceLevel: r.price_level,
+          verified: true,
+          source: 'google',
+          isOpen: r.opening_hours?.open_now ?? null,
+          curated: query.curated,
+          matchedActivities: matched,
+          score: 0,
+        })
+      }
+    }
+
+    // Filtr jakości
+    const MIN_RATING = 4.3
+    const MIN_REVIEWS = 15
+    const quality = Array.from(byId.values()).filter(
+      (p) =>
+        typeof p.googleRating === 'number' && p.googleRating >= MIN_RATING &&
+        typeof p.googleTotalRatings === 'number' && p.googleTotalRatings >= MIN_REVIEWS,
+    )
+
+    // Layer 3: scoring
+    for (const p of quality) {
+      p.score = computeScore({
+        googleRating: p.googleRating,
+        googleTotalRatings: p.googleTotalRatings,
+        distanceFromBase: p.distanceFromBase,
+        matchedActivities: p.matchedActivities,
+        curated: p.curated,
+        radius,
+      })
+    }
+
+    // Domyślne sortowanie wg score (ranking puli i wybór topów do szczegółów)
+    quality.sort((a, b) => b.score - a.score)
+
+    // Pobierz szczegóły (świeże opinie, godziny, strona) dla topowych
+    const top = quality.slice(0, 24)
+    await mapLimit(top, 6, async (p) => {
+      const details = await getPlaceDetails(p.googlePlaceId)
+      if (details.opening_hours?.open_now !== undefined) p.isOpen = details.opening_hours.open_now
+      if (details.price_level !== undefined) p.priceLevel = details.price_level
+      if (details.rating !== undefined) p.googleRating = details.rating
+      if (typeof details.user_ratings_total === 'number') p.googleTotalRatings = details.user_ratings_total
+      if (details.website) p.website = details.website
+      if (Array.isArray(details.reviews) && details.reviews.length > 0) {
+        p.recentReviewHighlights = details.reviews
+          .slice()
+          .sort((a: any, b: any) => (b.time || 0) - (a.time || 0))
+          .slice(0, 3)
+          .map((r: any) => {
+            const text = String(r.text || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+            if (!text) return ''
+            const stars = typeof r.rating === 'number' ? `⭐${r.rating} ` : ''
+            const when = r.relative_time_description ? ` (${r.relative_time_description})` : ''
+            return `${stars}„${text}”${when}`
+          })
+          .filter(Boolean)
+      }
+    })
+
+    const meta = {
+      curatedCount: curated.length,
+      queriesRun: queries.length,
+      rawCandidates: byId.size,
+      verified: quality.length,
+      radius,
+    }
+
+    // Zapisz do cache pulę posortowaną domyślnie wg score (klucz pomija sort)
+    await writeCache(cacheKey, {
+      places: sortPlaces(quality, 'match'),
+      baseLat: lat,
+      baseLon: lon,
+      meta,
+    })
+
+    // Finalne sortowanie wg wyboru użytkownika
+    const sorted = sortPlaces(quality, sort)
+
+    return NextResponse.json({
+      places: sorted,
+      baseLat: lat,
+      baseLon: lon,
+      meta: { ...meta, sort, cached: false },
+    })
+  } catch (err) {
+    return NextResponse.json({ places: [], error: String(err) })
+  }
+}

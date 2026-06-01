@@ -298,6 +298,7 @@ async function upsertCurated(
   activity: string,
   country: string,
   source: SourceRef,
+  errSink?: string[],
 ): Promise<'inserted' | 'updated' | 'error'> {
   if (!supabaseAdmin) return 'error'
   try {
@@ -333,9 +334,13 @@ async function upsertCurated(
     const { error } = await supabaseAdmin
       .from('curated_places')
       .upsert(row, { onConflict: 'google_place_id' })
-    if (error) return 'error'
+    if (error) {
+      if (errSink && errSink.length < 3) errSink.push(`upsert: ${error.code || ''} ${error.message || ''}`.trim())
+      return 'error'
+    }
     return existing ? 'updated' : 'inserted'
-  } catch {
+  } catch (e: any) {
+    if (errSink && errSink.length < 3) errSink.push(`throw: ${e?.message || String(e)}`)
     return 'error'
   }
 }
@@ -378,6 +383,7 @@ export async function POST(request: NextRequest) {
     errors: 0,
   }
   const log: string[] = []
+  const upsertErrors: string[] = []
 
   outer: for (const seed of seeds) {
     const country = String(seed.country || '').trim()
@@ -425,7 +431,7 @@ export async function POST(request: NextRequest) {
           const resolved = await resolvePlace(name, city, country, coords.lat, coords.lon)
           if (!resolved) { stats.skippedQuality++; continue }
           stats.resolved++
-          const result = await upsertCurated(resolved, activity, country, src)
+          const result = await upsertCurated(resolved, activity, country, src, upsertErrors)
           if (result === 'inserted') stats.inserted++
           else if (result === 'updated') stats.updated++
           else stats.errors++
@@ -435,5 +441,5 @@ export async function POST(request: NextRequest) {
     stats.seedsProcessed++
   }
 
-  return NextResponse.json({ ok: true, stats, log, ms: Date.now() - started })
+  return NextResponse.json({ ok: true, stats, log, upsertErrors, ms: Date.now() - started })
 }

@@ -31,6 +31,8 @@ type DiscoverPlace = {
   googleRating?: number
   googleTotalRatings?: number
   address?: string
+  subregion?: string
+  country?: string
   types: string[]
   tags: string[]
   distanceFromBase: number
@@ -112,6 +114,19 @@ function googleTypesToTags(types: string[]): string[] {
   if (has('park') || has('natural_feature') || has('campground')) tags.push('trekking')
   if (has('spa')) tags.push('relax')
   return Array.from(new Set(tags))
+}
+
+// Wyciąga czytelną nazwę miejscowości z formatted_address Google
+// (np. "Ljubljanica, 1000 Ljubljana, Slovenia" → "Ljubljana").
+function localityFromAddress(addr: string, country: string): string | undefined {
+  if (!addr) return undefined
+  const parts = addr.split(',').map((s) => s.trim()).filter(Boolean)
+  if (!parts.length) return undefined
+  let p = parts[parts.length - 1]
+  if (country && p.toLowerCase() === country.toLowerCase() && parts.length >= 2) {
+    p = parts[parts.length - 2]
+  }
+  return p.replace(/^\d[\d\s-]*/, '').trim() || undefined
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -501,6 +516,8 @@ export async function POST(request: NextRequest) {
           googleRating: r.rating,
           googleTotalRatings: r.user_ratings_total,
           address: r.formatted_address,
+          subregion: localityFromAddress(r.formatted_address || '', country),
+          country: country || undefined,
           types,
           tags: tags.length ? tags : (query.activity ? [query.activity] : ['sightseeing']),
           distanceFromBase: distance,

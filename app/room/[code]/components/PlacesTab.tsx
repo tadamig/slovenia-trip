@@ -581,7 +581,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [scanPhase, setScanPhase] = useState(0)
   const [postsScanned, setPostsScanned] = useState(0)
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
-  const [showAll, setShowAll] = useState(false)
+  const [showAll, setShowAll] = useState(true)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [activeSource, setActiveSource] = useState<'google' | 'reddit'>('google')
   const [searchMode, setSearchMode] = useState<SearchMode>('standard')
@@ -589,6 +589,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
   const [sortBy, setSortBy] = useState<'match' | 'rating' | 'distance'>('match')
   const [loadingMore, setLoadingMore] = useState(false)
   const [enriching, setEnriching] = useState(false)
+  const [enrichDone, setEnrichDone] = useState(0)
+  const [enrichTotal, setEnrichTotal] = useState(0)
   const [error, setError] = useState('')
   const [debugLine, setDebugLine] = useState('')
   const [redditUnavailable, setRedditUnavailable] = useState(false)
@@ -812,74 +814,140 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     }
     setEnriching(true)
 
-    // Krok 3: DeepSeek wzbogaca miejsca Google + wyciąga Local Gems
-    // Wysyłamy oba: google places + posty Reddit
+    // Krok 3: progressive enrichment — dzielimy pulę na paczki i scalamy wyniki
+    // w miarę napływania, żeby opisy AI pojawiały się stopniowo (a nie naraz).
+    const keyOf = (p: any) => (p?.googlePlaceId || p?.name || '').toString().toLowerCase().trim()
     try {
-      const enrichRes = await fetch('/api/places', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          posts, googlePlaces,
-          activities: groupActivities, region,
-          searchMode,
-          baseCity: room.end_city || '', transport: myPrefs.transport,
-          accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
-          numPeople: room.num_people || 4, startDate: room.start_date,
-          endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
-        }),
-      })
-
       setScanPhase(3)
 
-      let enrichedPlaces: AIPlace[] = []
-      let newLocalGems: AIPlace[] = []
-
-      if (enrichRes.ok) {
-        const enrichData = await enrichRes.json()
-        enrichedPlaces = (enrichData.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-        newLocalGems = (enrichData.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-        const meta = enrichData.meta || {}
-        const usedFallback = !!meta.usedFallback
-        const parseOk = meta.parseOk === true ? 'ok' : 'fail'
-        const aiStatus = meta.deepseekStatus || 0
-        const queryStat = redditMeta?.queriesTried || generatedQueries.length || 0
-        setDebugLine(
-          `Debug: reddit=${posts.length}, google=${googlePlaces.length}, fallback=${usedFallback ? 'tak' : 'nie'}, parse=${parseOk}, aiStatus=${aiStatus}, queries=${queryStat}`
-        )
-        if (usedFallback) {
-          setError('AI nie zwrocilo pelnego opisu. Pokazuje surowe dane z Google i czesciowe wyniki.')
-        }
-      } else {
-        setError('AI enrichment zwrocil blad. Pokazuje dane podstawowe.')
-        setDebugLine(`Debug: /api/places status=${enrichRes.status}, reddit=${posts.length}, google=${googlePlaces.length}`)
-      }
-      // Fallback — gdy enrichment pusty, pokaż surowe Google places
-      if (enrichedPlaces.length === 0 && googlePlaces.length > 0) {
-        enrichedPlaces = googlePlaces.map((p: any) => ({
+      if (googlePlaces.length > 0) {
+        // Lokalna kopia puli z placeholderami — podmieniamy karty po kluczu.
+        const working: AIPlace[] = googlePlaces.map((p: any) => ({
           ...p,
           tags: p.tags || [],
-          description: p.description || 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.',
-          whyThisGroup: p.whyThisGroup || 'Brak dopasowania AI dla grupy.',
-          groupFitNote: p.groupFitNote || 'AI: brak odpowiedzi',
+          description: p.description || 'Trwa analiza AI...',
+          whyThisGroup: p.whyThisGroup || 'Dopasowanie do profilu grupy: trwa analiza',
+          groupFitNote: p.groupFitNote || 'trwa analiza',
+          bestTime: p.bestTime || 'brak danych',
+          visitTips: p.visitTips || 'brak danych',
+          reviewSummary: p.reviewSummary || 'brak danych',
+          recentReviewHighlights: p.recentReviewHighlights || [],
         }))
+        const idxByKey = new Map<string, number>()
+        working.forEach((p, i) => idxByKey.set(keyOf(p), i))
+
+        const CLIENT_CHUNK = 6
+        const ENRICH_CONCURRENCY = 3
+        const chunks: any[][] = []
+        for (let i = 0; i < googlePlaces.length; i += CLIENT_CHUNK) {
+          chunks.push(googlePlaces.slice(i, i + CLIENT_CHUNK))
+        }
+
+        setEnrichDone(0)
+        setEnrichTotal(googlePlaces.length)
+        let collectedGems: AIPlace[] = []
+        let anyParsed = false
+        let anyFallback = false
+        let lastStatus = 0
+
+        const runChunk = async (chunk: any[], withPosts: boolean) => {
+          try {
+            const res = await fetch('/api/places', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                posts: withPosts ? posts : [],
+                googlePlaces: chunk,
+                activities: groupActivities, region, searchMode,
+                baseCity: room.end_city || '', transport: myPrefs.transport,
+                accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
+                numPeople: room.num_people || 4, startDate: room.start_date,
+                endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
+              }),
+            })
+            lastStatus = res.status
+            let enriched: AIPlace[] = []
+            if (res.ok) {
+              const data = await res.json()
+              enriched = (data.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+              if (data.meta?.parseOk) anyParsed = true
+              if (data.meta?.usedFallback) anyFallback = true
+              if (withPosts) collectedGems = (data.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+            }
+            if (enriched.length === 0) {
+              // sieć/serwer padł dla tej paczki — zostaw surowe dane Google
+              for (const raw of chunk) {
+                const i = idxByKey.get(keyOf(raw))
+                if (i !== undefined && working[i].description === 'Trwa analiza AI...') {
+                  working[i] = { ...working[i], description: 'Google zwrocil miejsce, ale AI nie wygenerowalo opisu.' }
+                }
+              }
+            } else {
+              for (const e of enriched) {
+                const i = idxByKey.get(keyOf(e))
+                if (i !== undefined) working[i] = { ...working[i], ...e, tags: e.tags || working[i].tags || [] }
+              }
+            }
+          } catch {
+            // zostaw placeholdery dla tej paczki
+          } finally {
+            setEnrichDone((d) => Math.min(d + chunk.length, googlePlaces.length))
+            setAiPlaces(working.slice())
+            if (collectedGems.length) setLocalGems(collectedGems.slice())
+          }
+        }
+
+        // Bounded concurrency; posty (Reddit/perełki) tylko z pierwszą paczką.
+        let cursor = 0
+        await Promise.all(
+          Array.from({ length: Math.min(ENRICH_CONCURRENCY, chunks.length) }, async () => {
+            while (cursor < chunks.length) {
+              const my = cursor++
+              await runChunk(chunks[my], my === 0)
+            }
+          }),
+        )
+
+        setLocalGems(collectedGems)
+        setAiPlaces(working.slice())
+        const queryStat = redditMeta?.queriesTried || generatedQueries.length || 0
+        setDebugLine(
+          `Debug: reddit=${posts.length}, google=${googlePlaces.length}, paczki=${chunks.length}, fallback=${anyFallback ? 'tak' : 'nie'}, parse=${anyParsed ? 'ok' : 'fail'}, status=${lastStatus}, queries=${queryStat}`,
+        )
+        if (anyFallback) setError('Czesc opisow AI sie nie wygenerowala — dla tych miejsc pokazuje dane podstawowe z Google.')
+        await saveRecommendations(working, posts.length)
+      } else {
+        // Brak miejsc z Google — ścieżka Reddit-only (jeden call).
+        const enrichRes = await fetch('/api/places', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            posts, googlePlaces: [],
+            activities: groupActivities, region, searchMode,
+            baseCity: room.end_city || '', transport: myPrefs.transport,
+            accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
+            numPeople: room.num_people || 4, startDate: room.start_date,
+            endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
+          }),
+        })
+        let enrichedPlaces: AIPlace[] = []
+        if (enrichRes.ok) {
+          const data = await enrichRes.json()
+          enrichedPlaces = (data.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+        } else {
+          setError('AI enrichment zwrocil blad. Pokazuje dane podstawowe.')
+        }
+        if (!hasEarlyGoogleResults) {
+          setFadingOut(true)
+          await new Promise(r => setTimeout(r, 400))
+        }
+        setAiPlaces(enrichedPlaces)
+        await saveRecommendations(enrichedPlaces, posts.length)
       }
 
-      // Pokaż wyniki
-      if (!hasEarlyGoogleResults) {
-        setFadingOut(true)
-        await new Promise(r => setTimeout(r, 400))
-      }
-      // Silnik /api/discover zwraca już pełną, posortowaną pulę — warstwa
-      // wyświetlania (filteredPlaces) sortuje wg wybranego trybu.
-      setAiPlaces(enrichedPlaces)
-      setLocalGems(newLocalGems)
       setLoading(false)
       setEnriching(false)
       setFadingOut(false)
       await new Promise(r => setTimeout(r, 50))
       setResultsVisible(true)
-
-      await saveRecommendations(enrichedPlaces, posts.length)
-
     } catch (e) {
       setError('Nie udalo sie pobrac rekomendacji. Sprawdz polaczenie.')
       setDebugLine('Debug: /api/places request failed (network/server).')
@@ -1088,7 +1156,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       )}
       {!loading && enriching && (
         <p className="text-water-300 text-xs bg-water-900/20 border border-water-800/30 rounded-xl px-4 py-3">
-          Miejsca z Google są już widoczne. AI właśnie dogrywa opisy, wskazówki i lokalne perełki.
+          Miejsca z Google są już widoczne. AI dogrywa opisy stopniowo
+          {enrichTotal > 0 ? ` — wzbogacono ${Math.min(enrichDone, enrichTotal)}/${enrichTotal}` : ''}.
         </p>
       )}
 

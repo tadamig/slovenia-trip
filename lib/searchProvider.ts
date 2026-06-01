@@ -1,14 +1,19 @@
 // ——————————————————————————————————————————————
 // Abstrakcja wyszukiwania webowego (do offline ingestu blogów).
 //
-// Jedyne miejsce zależne od dostawcy. Dziś: Google Custom Search JSON API.
-// Google CSE jest wygaszany dla nowych klientów (migracja do Vertex AI Search
-// do ~2027) — gdy przyjdzie czas, podmieniamy WYŁĄCZNIE implementację
-// `searchWeb` poniżej; reszta pipeline'u (ingest) zostaje bez zmian.
+// Jedyne miejsce zależne od dostawcy. Dziś: Brave Search API.
 //
-// Env (placeholdery — wartości wklejasz w Vercel):
-//   GOOGLE_CSE_KEY  — klucz API (Programmable Search Engine / Custom Search)
-//   GOOGLE_CSE_CX   — identyfikator wyszukiwarki (cx)
+// Dlaczego Brave, a nie Google CSE: od 20.01.2026 nowe wyszukiwarki Google
+// Programmable Search nie mogą już używać trybu "Search the entire web" —
+// dają tylko "sites to search" (wąska lista domen). Brave ma własny,
+// niezależny indeks całego internetu z prostym REST API i darmowym tierem.
+//
+// Gdyby kiedyś trzeba było zmienić dostawcę — podmieniamy WYŁĄCZNIE
+// implementację `searchWeb` poniżej; reszta pipeline'u (ingest) zostaje
+// bez zmian, bo kontrakt (WebResult) jest stały.
+//
+// Env (placeholder — wartość wklejasz w Vercel):
+//   BRAVE_API_KEY  — token subskrypcji z https://brave.com/search/api/
 // ——————————————————————————————————————————————
 
 export type WebResult = {
@@ -17,11 +22,10 @@ export type WebResult = {
   snippet: string
 }
 
-const GOOGLE_CSE_KEY = (process.env.GOOGLE_CSE_KEY || '').trim()
-const GOOGLE_CSE_CX = (process.env.GOOGLE_CSE_CX || '').trim()
+const BRAVE_API_KEY = (process.env.BRAVE_API_KEY || '').trim()
 
 export function isSearchConfigured(): boolean {
-  return Boolean(GOOGLE_CSE_KEY && GOOGLE_CSE_CX)
+  return Boolean(BRAVE_API_KEY)
 }
 
 /**
@@ -29,27 +33,31 @@ export function isSearchConfigured(): boolean {
  * Best-effort: przy braku konfiguracji lub błędzie zwraca [].
  *
  * @param query  zapytanie (np. "best SUP lakes near Bled blog")
- * @param limit  ile wyników (Google CSE: max 10 na zapytanie)
+ * @param limit  ile wyników (Brave: max 20 na zapytanie)
  */
 export async function searchWeb(query: string, limit = 8): Promise<WebResult[]> {
   if (!isSearchConfigured() || !query.trim()) return []
-  const num = Math.max(1, Math.min(10, limit))
+  const count = Math.max(1, Math.min(20, limit))
   try {
     const url =
-      `https://www.googleapis.com/customsearch/v1` +
-      `?key=${encodeURIComponent(GOOGLE_CSE_KEY)}` +
-      `&cx=${encodeURIComponent(GOOGLE_CSE_CX)}` +
-      `&q=${encodeURIComponent(query)}` +
-      `&num=${num}`
-    const res = await fetch(url)
+      `https://api.search.brave.com/res/v1/web/search` +
+      `?q=${encodeURIComponent(query)}` +
+      `&count=${count}`
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': BRAVE_API_KEY,
+      },
+    })
     if (!res.ok) return []
     const data = await res.json()
-    const items = Array.isArray(data.items) ? data.items : []
+    const items = Array.isArray(data?.web?.results) ? data.web.results : []
     return items
       .map((it: any): WebResult => ({
         title: String(it?.title || '').trim(),
-        url: String(it?.link || '').trim(),
-        snippet: String(it?.snippet || '').trim(),
+        url: String(it?.url || '').trim(),
+        snippet: String(it?.description || '').trim(),
       }))
       .filter((r: WebResult) => r.url)
   } catch {

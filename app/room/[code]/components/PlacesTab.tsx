@@ -147,6 +147,8 @@ interface AIPlace {
   matchedActivities?: string[]
   redditSources?: { title: string; url: string; score: number; subreddit: string }[]
   sources?: { title: string; url: string; score: number; subreddit: string }[]
+  blogSources?: { url: string; title: string }[] // źródła blogowe z bazy wiedzy (Layer 0)
+  mentionCount?: number // w ilu blogach wspomniane
 }
 
 type SearchMode = 'standard' | 'research'
@@ -324,6 +326,11 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
             {isMatch && (
               <span className="text-xs text-forest-500 bg-forest-800/20 px-2 py-0.5 rounded-full border border-forest-700/20">
                 ✓ pasuje do ekipy
+              </span>
+            )}
+            {(place.mentionCount || 0) > 0 && (
+              <span className="text-xs text-amber-400 bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-700/30">
+                📚 {place.mentionCount === 1 ? 'Polecane w blogu' : `Polecane w ${place.mentionCount} blogach`}
               </span>
             )}
             {place.verified && (
@@ -519,6 +526,20 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
               <ExternalLink className="w-3 h-3 flex-shrink-0" />
               <span className="truncate">{s.title}</span>
               <span className="text-stone-600 flex-shrink-0">↑{s.score}</span>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {/* Blog sources (baza wiedzy / Layer 0) */}
+      {showSources && (place.blogSources || []).length > 0 && (
+        <div className="space-y-1.5 border-t border-stone-700/40 pt-2">
+          <span className="text-xs text-amber-500/80">📚 Wspomniane w:</span>
+          {(place.blogSources || []).map((s, i) => (
+            <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-2 text-xs text-amber-400/90 hover:text-amber-300 transition-colors">
+              <ExternalLink className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{s.title || s.url}</span>
             </a>
           ))}
         </div>
@@ -779,7 +800,12 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
         const gData = await discoverRes.value.json()
         // Cap pilnuje backend (/api/places, MAX_ENRICH_PLACES). Tu bierzemy całą,
         // już posortowaną pulę z silnika — liczba miejsc zależy od ilości znalezionych.
-        googlePlaces = (gData.places || []).slice(0, 60)
+        googlePlaces = (gData.places || []).slice(0, 60).map((p: any) => {
+          // Silnik zwraca źródła blogowe w polu `sources` ({url,title}). Przenosimy
+          // je do `blogSources`, by nie kolidowały z redditowym `sources` na karcie.
+          const { sources, ...rest } = p
+          return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
+        })
         fetchedBaseLat = gData.baseLat
         fetchedBaseLon = gData.baseLon
         if (fetchedBaseLat) setBaseLat(fetchedBaseLat)

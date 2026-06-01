@@ -56,9 +56,11 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
         {activeTab === 'weather' && (
           <WeatherWidget room={room} myPrefs={myPrefs} />
         )}
-        {activeTab === 'places' && (
+        {/* PlacesTab trzymamy zamontowany na stałe (chowamy CSS-em), żeby analiza AI
+            i prefetch nie ginęły przy przełączaniu zakładek i nie liczyły się od nowa. */}
+        <div style={{ display: activeTab === 'places' ? 'block' : 'none' }}>
           <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
-        )}
+        </div>
         {activeTab === 'map' && (
           <MapTab room={room} myPrefs={myPrefs} />
         )}

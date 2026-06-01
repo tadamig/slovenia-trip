@@ -45,6 +45,8 @@ type DiscoverPlace = {
   curated: boolean
   matchedActivities: string[]
   score: number
+  sources?: { url: string; title: string }[]
+  mentionCount?: number
 }
 
 // ——————————————————————————————————————————————
@@ -320,6 +322,7 @@ function computeScore(p: {
   distanceFromBase: number
   matchedActivities: string[]
   curated: boolean
+  mentionCount?: number
   radius: number
 }): number {
   const ratingScore = clamp01(((p.googleRating ?? 4.3) - 4.3) / (5 - 4.3))
@@ -329,13 +332,17 @@ function computeScore(p: {
   const activityScore = p.matchedActivities.length > 0
     ? clamp01(0.6 + 0.2 * p.matchedActivities.length)
     : 0.3
-  const curatedBonus = p.curated ? 1 : 0
+  // Sygnał redakcyjny: skuratowane z blogów (Layer 0). Bazowo 0.5 za jedną
+  // wzmiankę, rośnie z liczbą różnych blogów (mention_count) do ~1.0 przy ~7.
+  const mentions = p.mentionCount ?? (p.curated ? 1 : 0)
+  const mentionNorm = clamp01(Math.log10(mentions + 1) / Math.log10(8))
+  const editorialScore = p.curated ? clamp01(0.5 + 0.5 * mentionNorm) : 0
   const score =
-    0.40 * activityScore +
-    0.20 * ratingScore +
-    0.15 * popularityScore +
-    0.15 * proximityScore +
-    0.10 * curatedBonus
+    0.38 * activityScore +
+    0.18 * ratingScore +
+    0.14 * popularityScore +
+    0.14 * proximityScore +
+    0.16 * editorialScore
   return Math.round(score * 1000) / 10 // 0–100, 1 miejsce po przecinku
 }
 
@@ -390,6 +397,40 @@ async function writeCache(key: string, payload: Record<string, unknown>): Promis
 }
 
 // ——————————————————————————————————————————————
+// Layer 0 — BAZA WIEDZY (curated_places): miejsca wyłuskane offline z blogów,
+// już zweryfikowane w Google. Czytamy publicznie (RLS: anon select).
+// ——————————————————————————————————————————————
+type CuratedRow = {
+  google_place_id: string
+  name: string
+  lat: number | null
+  lon: number | null
+  google_rating: number | null
+  google_total_ratings: number | null
+  subregion: string | null
+  country: string | null
+  types: string[] | null
+  activities: string[] | null
+  sources: { url: string; title: string }[] | null
+  mention_count: number | null
+}
+
+async function readCuratedPlaces(country: string, activities: string[]): Promise<CuratedRow[]> {
+  if (!supabase || !country) return []
+  try {
+    let query = supabase
+      .from('curated_places')
+      .select('google_place_id, name, lat, lon, google_rating, google_total_ratings, subregion, country, types, activities, sources, mention_count')
+      .ilike('country', country)
+    if (activities.length) query = query.overlaps('activities', activities)
+    const { data } = await query.limit(300)
+    return (data as CuratedRow[]) || []
+  } catch {
+    return []
+  }
+}
+
+// ——————————————————————————————————————————————
 // POST
 // ——————————————————————————————————————————————
 export async function POST(request: NextRequest) {
@@ -429,13 +470,16 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Layer 1: kuracja (DeepSeek) — równolegle z budowaniem zapytań destynacyjnych
-    const curated = await curate({
-      baseCity, country, radius,
-      activities: effActivities,
-      intensity: body.intensity,
-      numPeople: body.numPeople,
-    })
+    // Layer 0 (baza wiedzy z blogów) + Layer 1 (kuracja DeepSeek) — równolegle.
+    const [curatedRows, curated] = await Promise.all([
+      readCuratedPlaces(country, effActivities),
+      curate({
+        baseCity, country, radius,
+        activities: effActivities,
+        intensity: body.intensity,
+        numPeople: body.numPeople,
+      }),
+    ])
 
     // Layer 2: zbuduj listę zapytań textsearch
     // (a) skuratowane nazwy + (b) zapytania destynacyjne per aktywność
@@ -469,6 +513,44 @@ export async function POST(request: NextRequest) {
       }
       if (query.curated) place.curated = true
     }
+
+    // Layer 0: zasiej pulę miejscami z bazy wiedzy (blogi → curated_places).
+    // Są już zweryfikowane jakościowo przy ingeście; tu liczymy dystans i
+    // przycinamy do promienia. Wpadają do tej samej deduplikacji po place_id.
+    let curatedSeeded = 0
+    for (const row of curatedRows) {
+      if (!row.google_place_id || typeof row.lat !== 'number' || typeof row.lon !== 'number') continue
+      const distance = Math.round(distanceKm(lat!, lon!, row.lat, row.lon))
+      if (distance > radius) continue
+      const rowActs = (row.activities || []).filter((a) => KNOWN_ACTIVITIES.has(a))
+      const matched = rowActs.filter((a) => effActivities.includes(a))
+      const tags = rowActs.length ? rowActs : ['sightseeing']
+      byId.set(row.google_place_id, {
+        name: row.name,
+        googlePlaceId: row.google_place_id,
+        lat: row.lat,
+        lon: row.lon,
+        googleRating: row.google_rating ?? undefined,
+        googleTotalRatings: row.google_total_ratings ?? undefined,
+        subregion: row.subregion || localityFromAddress('', country),
+        country: row.country || country || undefined,
+        types: row.types || [],
+        tags,
+        distanceFromBase: distance,
+        verified: true,
+        source: 'google',
+        isOpen: null,
+        curated: true,
+        matchedActivities: matched.length ? matched : (rowActs[0] ? [rowActs[0]] : []),
+        score: 0,
+        sources: Array.isArray(row.sources) ? row.sources.map((s) => ({ url: s.url, title: s.title })) : [],
+        mentionCount: row.mention_count ?? (Array.isArray(row.sources) ? row.sources.length : 0),
+      })
+      const nk = normName(row.name)
+      if (nk) byName.set(nk, row.google_place_id)
+      curatedSeeded++
+    }
+
     for (const { query, results } of searchResults) {
       for (const r of results) {
         if (!r.place_id) continue
@@ -550,6 +632,7 @@ export async function POST(request: NextRequest) {
         distanceFromBase: p.distanceFromBase,
         matchedActivities: p.matchedActivities,
         curated: p.curated,
+        mentionCount: p.mentionCount,
         radius,
       })
     }
@@ -584,6 +667,7 @@ export async function POST(request: NextRequest) {
 
     const meta = {
       curatedCount: curated.length,
+      curatedSeeded,
       queriesRun: queries.length,
       rawCandidates: byId.size,
       verified: quality.length,

@@ -35,10 +35,12 @@ interface Props {
   myPrefs: UserPreference
   allPrefs: UserPreference[]
   onReloadPrefs: () => void
+  prefetched?: { places: any[]; baseLat: number | null; baseLon: number | null } | null
 }
 
-export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs }: Props) {
-  const [activeTab, setActiveTab] = useState('profile')
+export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefetched }: Props) {
+  // Po onboardingu (Tor B) startujemy od zakładki Miejsca — tam czekają wyniki.
+  const [activeTab, setActiveTab] = useState(prefetched ? 'places' : 'profile')
 
   return (
     <div className="min-h-screen bg-stone-950 flex flex-col">
@@ -55,7 +57,7 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs }: Pro
           <WeatherWidget room={room} myPrefs={myPrefs} />
         )}
         {activeTab === 'places' && (
-          <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
+          <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
         )}
         {activeTab === 'map' && (
           <MapTab room={room} myPrefs={myPrefs} />

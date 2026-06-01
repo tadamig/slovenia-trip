@@ -7,7 +7,10 @@ import { getSessionId, getSessionName, saveRoomToHistory, setSessionId } from '@
 import { Room, UserPreference } from '@/lib/supabase'
 import DialogFlow from './components/DialogFlow'
 import AppShell from './components/AppShell'
+import TailoringAnimation from './components/TailoringAnimation'
 import { Loader2 } from 'lucide-react'
+
+type Prefetched = { places: any[]; baseLat: number | null; baseLon: number | null }
 
 export default function RoomPage() {
   const params = useParams()
@@ -19,6 +22,11 @@ export default function RoomPage() {
   const [allPrefs, setAllPrefs] = useState<UserPreference[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+
+  // Tor B — faza „szycia na miarę" po onboardingu + prefetch miejsc do pamięci
+  const [phase, setPhase] = useState<'normal' | 'tailoring'>('normal')
+  const [prefetchReady, setPrefetchReady] = useState(false)
+  const [prefetched, setPrefetched] = useState<Prefetched | null>(null)
 
   useEffect(() => {
     if (!code) return
@@ -117,10 +125,50 @@ export default function RoomPage() {
     return () => { supabase.removeChannel(channel) }
   }, [room?.id])
 
+  // Prefetch miejsc do pamięci podczas animacji „szycia na miarę".
+  // Bezpiecznik: `ready` zapali się nawet gdy /api/discover jest wolny lub padnie,
+  // więc animacja zawsze się domknie i nigdy nie zawiesi użytkownika.
+  function startPrefetch(prefs: Partial<UserPreference>, roomUpdates?: Partial<Room>) {
+    const baseCity = (roomUpdates?.end_city ?? room?.end_city) || ''
+    const country = (roomUpdates?.country ?? room?.country) || ''
+    const activities = prefs.activities || []
+    const intensity = prefs.intensity ?? myPrefs?.intensity
+    const numPeople = room?.num_people || 4
+
+    const safety = setTimeout(() => setPrefetchReady(true), 15000)
+
+    fetch('/api/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseCity, country, activities,
+        radius: 40, sort: 'match', intensity, numPeople,
+      }),
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const g = await res.json()
+          setPrefetched({
+            places: g.places || [],
+            baseLat: g.baseLat ?? null,
+            baseLon: g.baseLon ?? null,
+          })
+        }
+      })
+      .catch(() => {})
+      .finally(() => { clearTimeout(safety); setPrefetchReady(true) })
+  }
+
   async function handleDialogComplete(prefs: Partial<UserPreference>, roomUpdates?: Partial<Room>) {
     if (!room) return
     const sid = getSessionId()
     const name = getSessionName()
+
+    // Tor B: natychmiast przełącz na animację i wystartuj prefetch w tle
+    setPhase('tailoring')
+    setPrefetchReady(false)
+    setPrefetched(null)
+    startPrefetch(prefs, roomUpdates)
 
     // Uaktualnij pokój jeśli są zmiany (np. data, miasto)
     if (roomUpdates && Object.keys(roomUpdates).length > 0) {
@@ -176,6 +224,19 @@ export default function RoomPage() {
 
   if (!room) return null
 
+  // Tor B: po zakończeniu dialogu pokazujemy animację „szycia na miarę",
+  // a w tle prefetchujemy miejsca. „Boom" domyka się, gdy dane są w pamięci.
+  if (phase === 'tailoring') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-950">
+        <TailoringAnimation
+          ready={prefetchReady}
+          onComplete={() => setPhase('normal')}
+        />
+      </div>
+    )
+  }
+
   // Jeśli użytkownik nie przeszedł dialogu → pokaż dialog
   if (!myPrefs?.completed) {
     return (
@@ -195,6 +256,7 @@ export default function RoomPage() {
       myPrefs={myPrefs}
       allPrefs={allPrefs}
       onReloadPrefs={loadRoom}
+      prefetched={prefetched}
     />
   )
 }

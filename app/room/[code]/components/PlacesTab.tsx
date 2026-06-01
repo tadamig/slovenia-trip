@@ -109,6 +109,7 @@ interface Props {
   room: Room
   myPrefs: UserPreference
   allPrefs: UserPreference[]
+  prefetched?: { places: any[]; baseLat: number | null; baseLon: number | null } | null
 }
 
 interface AIPlace {
@@ -171,6 +172,21 @@ function formatCount(n: number): string {
     return `${(n >= 10000 ? Math.round(k) : Math.round(k * 10) / 10).toString().replace('.', ',')}k`
   }
   return String(n)
+}
+
+// Szybkie karty Google z placeholderami opisów (przed wzbogaceniem AI).
+function buildQuickPlaces(googlePlaces: any[]): AIPlace[] {
+  return googlePlaces.map((p: any) => ({
+    ...p,
+    tags: p.tags || [],
+    description: p.description || 'Trwa analiza AI...',
+    whyThisGroup: p.whyThisGroup || 'Dopasowanie do profilu grupy: trwa analiza',
+    groupFitNote: p.groupFitNote || 'trwa analiza',
+    bestTime: p.bestTime || 'brak danych',
+    visitTips: p.visitTips || 'brak danych',
+    reviewSummary: p.reviewSummary || 'brak danych',
+    recentReviewHighlights: p.recentReviewHighlights || [],
+  }))
 }
 
 const Slovenia_SPOTS = ['Bled', 'Bohinj', 'Soča', 'Ljubljana', 'Piran', 'Triglav', 'Kranjska Gora', 'Kobarid', 'Koper', 'Portorož']
@@ -589,7 +605,7 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
 }
 
 // ——— GŁÓWNY KOMPONENT ———
-export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
+export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props) {
   const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
   const [localGems, setLocalGems] = useState<AIPlace[]>([])
   const [baseLat, setBaseLat] = useState<number | null>(null)
@@ -627,7 +643,19 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
 
   useEffect(() => {
     loadSavedPlaces()
-    loadSavedRecommendations()
+    // Tor B: jeśli onboarding dostarczył prefetch miejsc — uruchom od razu
+    // wzbogacanie AI (bez czekania na klik). Inaczej wczytaj zapisane rekomendacje.
+    if (prefetched && (prefetched.places?.length ?? 0) > 0) {
+      handleSearch({
+        preGooglePlaces: prefetched.places,
+        preBaseLat: prefetched.baseLat,
+        preBaseLon: prefetched.baseLon,
+        silent: true,
+      })
+    } else {
+      loadSavedRecommendations()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id])
 
   async function loadSavedRecommendations() {
@@ -724,8 +752,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
     setLoadingMore(false)
   }
 
-  async function handleSearch() {
-    setLoading(true)
+  async function handleSearch(opts?: { preGooglePlaces?: any[]; preBaseLat?: number | null; preBaseLon?: number | null; silent?: boolean }) {
+    const isPrefetch = !!opts?.preGooglePlaces
+    if (!opts?.silent) setLoading(true)
     setEnriching(false)
     setError('')
     setDebugLine('')
@@ -783,41 +812,67 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       )
     })()
 
-    const [discoverRes, redditRes] = await Promise.allSettled([
-      fetch('/api/discover', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseCity: room.end_city || '', country: room.country || '',
-          activities: groupActivities, radius, sort: sortBy,
-          intensity: myPrefs.intensity, numPeople: room.num_people || 4,
+    if (isPrefetch) {
+      // Tor B: miejsca z /api/discover są już w pamięci (pobrane podczas animacji).
+      // Pomijamy ponowny fetch — mapujemy gotową pulę i pokazujemy ją natychmiast,
+      // a Reddit (lokalne perełki) dolatuje w tle.
+      googlePlaces = (opts!.preGooglePlaces || []).slice(0, 60).map((p: any) => {
+        const { sources, ...rest } = p
+        return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
+      })
+      fetchedBaseLat = opts!.preBaseLat ?? null
+      fetchedBaseLon = opts!.preBaseLon ?? null
+      if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
+      if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
+      if (googlePlaces.length > 0) {
+        setAiPlaces(buildQuickPlaces(googlePlaces))
+        setResultsVisible(true)
+        setLoading(false)
+      }
+      const [redditOnly] = await Promise.allSettled([redditTask])
+      if (redditOnly.status === 'fulfilled') {
+        posts = redditOnly.value.posts || []
+        redditMeta = redditOnly.value.meta || null
+        setPostsScanned(posts.length)
+      }
+      setRedditUnavailable(posts.length === 0)
+    } else {
+      const [discoverRes, redditRes] = await Promise.allSettled([
+        fetch('/api/discover', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseCity: room.end_city || '', country: room.country || '',
+            activities: groupActivities, radius, sort: sortBy,
+            intensity: myPrefs.intensity, numPeople: room.num_people || 4,
+          }),
         }),
-      }),
-      redditTask,
-    ])
+        redditTask,
+      ])
 
-    if (discoverRes.status === 'fulfilled' && discoverRes.value.ok) {
-      try {
-        const gData = await discoverRes.value.json()
-        // Cap pilnuje backend (/api/places, MAX_ENRICH_PLACES). Tu bierzemy całą,
-        // już posortowaną pulę z silnika — liczba miejsc zależy od ilości znalezionych.
-        googlePlaces = (gData.places || []).slice(0, 60).map((p: any) => {
-          // Silnik zwraca źródła blogowe w polu `sources` ({url,title}). Przenosimy
-          // je do `blogSources`, by nie kolidowały z redditowym `sources` na karcie.
-          const { sources, ...rest } = p
-          return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
-        })
-        fetchedBaseLat = gData.baseLat
-        fetchedBaseLon = gData.baseLon
-        if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
-        if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
-      } catch {}
+      if (discoverRes.status === 'fulfilled' && discoverRes.value.ok) {
+        try {
+          const gData = await discoverRes.value.json()
+          // Cap pilnuje backend (/api/places, MAX_ENRICH_PLACES). Tu bierzemy całą,
+          // już posortowaną pulę z silnika — liczba miejsc zależy od ilości znalezionych.
+          googlePlaces = (gData.places || []).slice(0, 60).map((p: any) => {
+            // Silnik zwraca źródła blogowe w polu `sources` ({url,title}). Przenosimy
+            // je do `blogSources`, by nie kolidowały z redditowym `sources` na karcie.
+            const { sources, ...rest } = p
+            return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
+          })
+          fetchedBaseLat = gData.baseLat
+          fetchedBaseLon = gData.baseLon
+          if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
+          if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
+        } catch {}
+      }
+      if (redditRes.status === 'fulfilled') {
+        posts = redditRes.value.posts || []
+        redditMeta = redditRes.value.meta || null
+        setPostsScanned(posts.length)
+      }
+      setRedditUnavailable(posts.length === 0)
     }
-    if (redditRes.status === 'fulfilled') {
-      posts = redditRes.value.posts || []
-      redditMeta = redditRes.value.meta || null
-      setPostsScanned(posts.length)
-    }
-    setRedditUnavailable(posts.length === 0)
 
     setScanPhase(2)
     const hasEarlyGoogleResults = googlePlaces.length > 0
@@ -1148,7 +1203,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs }: Props) {
       {/* Przyciski */}
       {!loading && (
         <div className="flex gap-2">
-          <button onClick={handleSearch} disabled={enriching || loadingMore}
+          <button onClick={() => handleSearch()} disabled={enriching || loadingMore}
             className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-forest-700 to-water-700 hover:from-forest-600 hover:to-water-600 disabled:opacity-60 text-white rounded-2xl py-4 font-semibold text-sm transition-all active:scale-95 shadow-lg">
             <RefreshCw className="w-4 h-4" />
             {enriching ? 'AI dopracowuje...' : aiPlaces.length > 0 ? 'Odśwież' : 'Szukaj dla ekipy'}

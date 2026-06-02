@@ -103,8 +103,15 @@ const SHOP_TYPES = new Set([
 // Sieci handlowe (po nazwie) — łapiemy nawet gdy Google nie da typu sklepowego.
 const SHOP_CHAIN_RE = /\b(lidl|spar|interspar|hofer|mercator|tuš|tus|leclerc|aldi|kaufland|maximarket|petrol|omv|hipermarket|hypermarket)\b/i
 
+// Prawdziwe targowiska — Google często taguje kryte hale targowe jako
+// `shopping_mall`/`department_store`, a to DOKŁADNIE czego user chce przy
+// "markets". Ta nazwa NADPISUJE klasyfikację sklepu (zostają w wynikach).
+const MARKET_NAME_RE = /(tržnic|trznic|tržaš|trzas|sejem|bolšj|bolsj|market hall|farmers?\s*market|bazaar|bazar|pokrita)/i
+
 // Czy to sklep/market (kandydat do kubełka `shops`, nie do głównych wyników).
 function isShopPlace(types: string[], name: string): boolean {
+  // Realne targowisko (po nazwie) NIGDY nie jest "sklepem" do schowania.
+  if (MARKET_NAME_RE.test(name)) return false
   if (types.some((t) => SHOP_TYPES.has(t))) return true
   if (SHOP_CHAIN_RE.test(name)) return true
   return false

@@ -152,7 +152,10 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         event: '*', schema: 'public', table: 'packing_items',
         filter: `room_id=eq.${room.id}`,
       }, (payload) => {
-        if (payload.eventType === 'INSERT') setItems(prev => [...prev, payload.new as PackingItem])
+        if (payload.eventType === 'INSERT') {
+          const incoming = payload.new as PackingItem
+          setItems(prev => prev.some(i => i.id === incoming.id) ? prev : [...prev, incoming])
+        }
         else if (payload.eventType === 'UPDATE') setItems(prev => prev.map(i => i.id === (payload.new as PackingItem).id ? payload.new as PackingItem : i))
         else if (payload.eventType === 'DELETE') setItems(prev => prev.filter(i => i.id !== payload.old.id))
       })

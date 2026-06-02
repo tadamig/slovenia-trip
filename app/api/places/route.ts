@@ -4,26 +4,11 @@ export const maxDuration = 60
 
 type SearchMode = 'standard' | 'research'
 
-type RedditPost = {
-  title: string
-  url: string
-  score: number
-  subreddit: string
-  text?: string
-}
-
 type GooglePlace = {
   name: string
   googlePlaceId?: string
   tags?: string[]
   [key: string]: unknown
-}
-
-type SourceLink = {
-  title: string
-  url: string
-  score: number
-  subreddit: string
 }
 
 const REGION_TO_COUNTRY: Record<string, string> = {
@@ -106,18 +91,6 @@ function asArray<T>(value: unknown): T[] {
 
 function asString(value: unknown, fallback = 'brak danych'): string {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback
-}
-
-function asSourceLinks(sourcePosts: unknown, posts: RedditPost[]): SourceLink[] {
-  return asArray<number>(sourcePosts)
-    .map((i) => posts[i - 1])
-    .filter(Boolean)
-    .map((p) => ({
-      title: p.title,
-      url: p.url,
-      score: p.score,
-      subreddit: p.subreddit,
-    }))
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -236,76 +209,6 @@ Zwroc obiekt JSON:
       "sentiment": "pozytywny|neutralny|mieszany|brak danych",
       "authenticityNote": "krotka notatka lub brak danych"
     }
-  ],
-  "localGems": []
-}`
-}
-
-function buildRedditOnlyPrompt(params: {
-  searchMode: SearchMode
-  profileLines: string
-  country: string
-  baseCity: string
-  posts: RedditPost[]
-  region: string
-  batch: number
-}) {
-  const { searchMode, profileLines, country, baseCity, posts, region, batch } = params
-  const batchNote =
-    batch === 2
-      ? 'Druga partia: skup sie na mniej oczywistych propozycjach.'
-      : 'Pierwsza partia: zwroc najbardziej wartosciowe miejsca.'
-  const styleNote =
-    searchMode === 'research'
-      ? 'Tryb RESEARCH: priorytet dla lokalnych perelek, mniej oczywistych miejsc i natury.'
-      : 'Tryb STANDARD: balans miedzy klasykami a ciekawymi miejscami.'
-
-  const postLines = posts
-    .map(
-      (p, i) =>
-        `[${i + 1}] r/${p.subreddit} | ${p.score} pkt | "${p.title}"${
-          p.text ? `\n${p.text.slice(0, 220)}` : ''
-        }`,
-    )
-    .join('\n\n')
-
-  return `Jestes ekspertem od podrozy. Odpowiedz tylko poprawnym JSON-em.
-${batchNote}
-${styleNote}
-
-PROFIL EKIPY:
-${profileLines}
-- Region: ${country}, okolice ${baseCity} (max 100km)
-
-POSTY Z REDDIT (${posts.length}):
-${postLines}
-
-Zwroc JSON:
-{
-  "places": [
-    {
-      "name": "Nazwa miejsca",
-      "description": "2-3 zdania",
-      "whyThisGroup": "dlaczego pasuje ekipie",
-      "groupFitNote": "krotka etykieta dopasowania grupowego",
-      "bestTime": "najlepsza pora dnia/sezon albo brak danych",
-      "visitTips": "jak dojsc / praktyczna wskazowka albo brak danych",
-      "reviewSummary": "krotkie podsumowanie zrodel",
-      "recentReviewHighlights": ["punkt 1", "punkt 2"],
-      "tags": ["trekking", "food"],
-      "region": "${region}",
-      "subregion": "okolica",
-      "country": "${country}",
-      "lat": 46.3,
-      "lon": 14.1,
-      "distanceFromBase": 45,
-      "estimatedCost": "free|cheap|moderate|expensive|brak danych",
-      "sourceCount": 3,
-      "sourcePosts": [1, 3, 5],
-      "sentiment": "pozytywny|neutralny|mieszany|brak danych",
-      "localityScore": 8,
-      "authenticityNote": "krotka notatka lub brak danych"
-    }
   ]
 }`
 }
@@ -375,7 +278,6 @@ function rawGoogleFallback(places: GooglePlace[]) {
     sourceCount: 0,
     sentiment: 'brak danych',
     authenticityNote: 'brak danych',
-    sources: [] as SourceLink[],
   }))
 }
 
@@ -402,7 +304,7 @@ async function enrichGoogleChunk(params: {
     return { enriched: rawGoogleFallback(chunk), parseOk: false, status }
   }
 
-  const { enriched } = normalizeEnrichedResult({ parsed, googlePlaces: chunk, posts: [] })
+  const enriched = normalizeEnrichedResult({ parsed, googlePlaces: chunk })
   if (enriched.length === 0) {
     return { enriched: rawGoogleFallback(chunk), parseOk: false, status }
   }
@@ -412,9 +314,8 @@ async function enrichGoogleChunk(params: {
 function normalizeEnrichedResult(params: {
   parsed: Record<string, unknown>
   googlePlaces: GooglePlace[]
-  posts: RedditPost[]
 }) {
-  const { parsed, googlePlaces, posts } = params
+  const { parsed, googlePlaces } = params
   const enrichedRaw = asArray<Record<string, unknown>>(parsed.enriched).length
     ? asArray<Record<string, unknown>>(parsed.enriched)
     : asArray<Record<string, unknown>>(parsed.places)
@@ -448,56 +349,16 @@ function normalizeEnrichedResult(params: {
           typeof item.sourceCount === 'number' && item.sourceCount >= 0 ? item.sourceCount : 0,
         sentiment: asString(item.sentiment),
         authenticityNote: asString(item.authenticityNote),
-        sources: asSourceLinks(item.sourcePosts, posts),
       }
     })
     .filter(Boolean)
 
-  const localGems = asArray<Record<string, unknown>>(parsed.localGems).map((place) => ({
-    ...place,
-    name: asString(place.name),
-    description: asString(place.description),
-    whyThisGroup: asString(place.whyThisGroup, 'Dopasowanie do profilu grupy: brak danych'),
-    groupFitNote: asString(place.groupFitNote),
-    bestTime: asString(place.bestTime),
-    visitTips: asString(place.visitTips),
-    reviewSummary: asString(place.reviewSummary),
-    recentReviewHighlights: asArray<string>(place.recentReviewHighlights).slice(0, 3),
-    tags: whitelistTags(place.tags),
-    source: 'reddit',
-    sourceCount:
-      typeof place.sourceCount === 'number' && place.sourceCount >= 0 ? place.sourceCount : 0,
-    sentiment: asString(place.sentiment),
-    sources: asSourceLinks(place.sourcePosts, posts),
-  }))
-
-  return { enriched, localGems }
-}
-
-function normalizeRedditPlaces(parsed: Record<string, unknown>, posts: RedditPost[]) {
-  return asArray<Record<string, unknown>>(parsed.places).map((place) => ({
-    ...place,
-    name: asString(place.name),
-    description: asString(place.description),
-    whyThisGroup: asString(place.whyThisGroup, 'Dopasowanie do profilu grupy: brak danych'),
-    groupFitNote: asString(place.groupFitNote),
-    bestTime: asString(place.bestTime),
-    visitTips: asString(place.visitTips),
-    reviewSummary: asString(place.reviewSummary),
-    recentReviewHighlights: asArray<string>(place.recentReviewHighlights).slice(0, 3),
-    tags: whitelistTags(place.tags),
-    estimatedCost: asString(place.estimatedCost),
-    sentiment: asString(place.sentiment),
-    sourceCount:
-      typeof place.sourceCount === 'number' && place.sourceCount >= 0 ? place.sourceCount : 0,
-    sources: asSourceLinks(place.sourcePosts, posts),
-  }))
+  return enriched
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const inputPosts = asArray<RedditPost>(body.posts)
     const activities = asArray<string>(body.activities)
     const inputGooglePlaces = asArray<GooglePlace>(body.googlePlaces)
 
@@ -509,38 +370,30 @@ export async function POST(request: NextRequest) {
     const intensity = typeof body.intensity === 'string' ? body.intensity : undefined
     const numPeople = typeof body.numPeople === 'number' ? body.numPeople : undefined
     const tripDays = typeof body.tripDays === 'number' ? body.tripDays : null
-    const batch = typeof body.batch === 'number' ? body.batch : 1
     const searchMode = normalizeMode(body.searchMode ?? body.mode)
-    const maxPosts = searchMode === 'research' ? 28 : 20
-    const posts = inputPosts.slice(0, maxPosts)
     // Liczba wzbogacanych miejsc zależy od wejścia (nie sztywny limit), ograniczona
     // jedynie buforem bezpieczeństwa. Współbieżność wywołań AI trzyma MAX_CONCURRENT_CHUNKS.
     const googlePlaces = inputGooglePlaces.slice(0, MAX_ENRICH_PLACES)
     const diagnostics = {
-      inputPosts: inputPosts.length,
       inputGooglePlaces: inputGooglePlaces.length,
-      postsSentToAI: posts.length,
       googlePlacesSentToAI: googlePlaces.length,
-      batch,
       searchMode,
       parseOk: false,
       deepseekStatus: 0,
       deepseekError: '',
-      promptMode: 'mixed',
+      promptMode: 'google_only',
     }
 
     if (!region || !baseCity) {
       return NextResponse.json({
         places: [],
-        localGems: [],
-        postsAnalyzed: 0,
         error: 'Missing region or baseCity',
         meta: diagnostics,
       })
     }
 
-    if (posts.length === 0 && googlePlaces.length === 0) {
-      return NextResponse.json({ places: [], localGems: [], postsAnalyzed: 0, meta: diagnostics })
+    if (googlePlaces.length === 0) {
+      return NextResponse.json({ places: [], meta: diagnostics })
     }
 
     const country = REGION_TO_COUNTRY[region.toLowerCase()] || region
@@ -554,72 +407,34 @@ export async function POST(request: NextRequest) {
       baseCity,
       country,
     })
-    const hasGooglePlaces = googlePlaces.length > 0
-    diagnostics.promptMode = hasGooglePlaces ? (posts.length > 0 ? 'mixed' : 'google_only') : 'reddit_only'
 
-    if (hasGooglePlaces) {
-      // Enrich Google places in small parallel chunks so each DeepSeek
-      // response stays within the token budget and parses reliably.
-      const chunks = chunkArray(googlePlaces, CHUNK_SIZE)
-      const chunkResults = await mapLimit(chunks, MAX_CONCURRENT_CHUNKS, (chunk) =>
-        enrichGoogleChunk({ searchMode, profileLines, chunk }),
-      )
-      const enriched = chunkResults.flatMap((r) => r.enriched)
-      const fallbackChunks = chunkResults.filter((r) => !r.parseOk).length
-
-      // Local gems come from Reddit only, in a single separate call.
-      let localGems: any[] = []
-      if (posts.length > 0) {
-        const gems = await callAndParse(
-          buildRedditOnlyPrompt({ searchMode, profileLines, country, baseCity, posts, region, batch }),
-          1500,
-        )
-        if (gems.parsed) {
-          localGems = normalizeRedditPlaces(gems.parsed, posts).map((p) => ({ ...p, source: 'reddit' }))
-        }
-      }
-
-      diagnostics.deepseekStatus = chunkResults.some((r) => r.parseOk)
-        ? 200
-        : chunkResults[0]?.status ?? 0
-      diagnostics.parseOk = fallbackChunks === 0
-      if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed_partial'
-
-      return NextResponse.json({
-        places: enriched,
-        localGems,
-        postsAnalyzed: posts.length,
-        meta: {
-          ...diagnostics,
-          usedFallback: fallbackChunks > 0,
-          fallbackChunks,
-          totalChunks: chunks.length,
-        },
-      })
-    }
-
-    // Reddit-only path (no Google places available).
-    const redditCall = await callAndParse(
-      buildRedditOnlyPrompt({ searchMode, profileLines, country, baseCity, posts, region, batch }),
-      1700,
+    // Enrich Google places in small parallel chunks so each DeepSeek
+    // response stays within the token budget and parses reliably.
+    const chunks = chunkArray(googlePlaces, CHUNK_SIZE)
+    const chunkResults = await mapLimit(chunks, MAX_CONCURRENT_CHUNKS, (chunk) =>
+      enrichGoogleChunk({ searchMode, profileLines, chunk }),
     )
-    diagnostics.deepseekStatus = redditCall.status
-    const parsed = redditCall.parsed ?? {}
-    diagnostics.parseOk = Object.keys(parsed).length > 0
-    if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed'
+    const enriched = chunkResults.flatMap((r) => r.enriched)
+    const fallbackChunks = chunkResults.filter((r) => !r.parseOk).length
 
-    const places = normalizeRedditPlaces(parsed, posts)
+    diagnostics.deepseekStatus = chunkResults.some((r) => r.parseOk)
+      ? 200
+      : chunkResults[0]?.status ?? 0
+    diagnostics.parseOk = fallbackChunks === 0
+    if (!diagnostics.parseOk) diagnostics.deepseekError = 'parse_failed_partial'
+
     return NextResponse.json({
-      places,
-      localGems: [],
-      postsAnalyzed: posts.length,
-      meta: { ...diagnostics, usedFallback: false },
+      places: enriched,
+      meta: {
+        ...diagnostics,
+        usedFallback: fallbackChunks > 0,
+        fallbackChunks,
+        totalChunks: chunks.length,
+      },
     })
   } catch (err) {
     return NextResponse.json({
       places: [],
-      localGems: [],
-      postsAnalyzed: 0,
       error: String(err),
       meta: {
         deepseekError: String(err),

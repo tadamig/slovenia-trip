@@ -12,93 +12,6 @@ function countryToRegion(country: string): string {
   return 'europe' // fallback — Europa ogólnie
 }
 
-const SUBREDDIT_BLACKLIST = new Set([
-  'leopardsatemyface','politics','worldnews','news','conspiracy','memes','funny',
-  'gaming','sports','nfl','nba','soccer','movies','television','music','stocks',
-  'wallstreetbets','cryptocurrency','bitcoin','dating','relationship_advice',
-  'amitheasshole','tifu','askreddit','showerthoughts','todayilearned',
-  'nottheonion','upliftingnews','facepalm','mildlyinfuriating','nextfuckinglevel',
-  'unexpected','oddlysatisfying','damnthatsinteresting','interestingasfuck',
-])
-
-function getPostPriority(subreddit: string, prioritySubreddits: string[]): number {
-  const sub = subreddit.toLowerCase()
-  if (SUBREDDIT_BLACKLIST.has(sub)) return -1 // odrzuć
-  if (prioritySubreddits.map(s => s.toLowerCase()).includes(sub)) return 2 // priorytet
-  return 1 // normalny
-}
-
-async function fetchRedditFromBrowser(
-  activities: string[], region: string, baseCity: string,
-  tripDays: number | null, month: number | null,
-  transport: string, accommodation: string, intensity: string,
-  budget: string, food: string[], numPeople: number,
-  prebuiltQueries?: string[],
-  prioritySubreddits?: string[]
-): Promise<{ posts: any[]; meta?: any }> {
-  // Use prebuilt queries from DeepSeek, otherwise fallback.
-  const queries = prebuiltQueries && prebuiltQueries.length > 0
-    ? prebuiltQueries
-    : [
-        `${region} hidden gem travel`,
-        `${baseCity} local tips`,
-        `${region} recommend reddit`,
-        `visit ${region} advice`,
-      ]
-
-  const res = await fetch('/api/reddit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      queries: queries.slice(0, 18),
-      sort: 'relevance',
-      time: 'year',
-      limitPerQuery: 12,
-    }),
-  })
-
-  if (!res.ok) return { posts: [] }
-  const data = await res.json()
-  const allPosts: any[] = (data.posts || [])
-    .map((p: any) => ({
-      title: p.title,
-      score: p.score,
-      url: p.url,
-      subreddit: p.subreddit,
-      text: p.text || '',
-      numComments: p.numComments || 0,
-      priority: getPostPriority(p.subreddit, prioritySubreddits || []),
-    }))
-    .filter((p: any) => p.priority >= 0 && p.score >= 1)
-
-  if (allPosts.length === 0) {
-    const fallbackRes = await fetch(
-      `/api/reddit?q=${encodeURIComponent(`${baseCity || region} travel tips`)}&sort=relevance&limit=20&t=year`
-    )
-    if (!fallbackRes.ok) return { posts: [] }
-    const fallbackData = await fallbackRes.json()
-    const fallbackPosts = (fallbackData.posts || []).map((p: any) => ({
-        ...p,
-        priority: getPostPriority(p.subreddit, prioritySubreddits || []),
-      }))
-      .filter((p: any) => p.priority >= 0)
-    return { posts: fallbackPosts, meta: fallbackData.meta || { source: 'fallback' } }
-  }
-
-  // Sort with priority subreddits first, then by score.
-  allPosts.sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority
-    return b.score - a.score
-  })
-  return {
-    posts: allPosts.slice(0, 50),
-    meta: {
-      ...(data.meta || {}),
-      queriesTried: data.queriesTried || queries.length,
-    },
-  }
-}
-
 import { useState, useEffect } from 'react'
 import GlobeAnimation from './GlobeAnimation'
 import { supabase, SavedPlace, Room, UserPreference } from '@/lib/supabase'
@@ -142,12 +55,10 @@ interface AIPlace {
   googleAddress?: string
   address?: string
   website?: string
-  source?: 'google' | 'reddit' // skąd pochodzi
+  source?: 'google' // skąd pochodzi
   score?: number // ranking silnika /api/discover (0–100)
   curated?: boolean // czy pochodzi z kuracji DeepSeek
   matchedActivities?: string[]
-  redditSources?: { title: string; url: string; score: number; subreddit: string }[]
-  sources?: { title: string; url: string; score: number; subreddit: string }[]
   blogSources?: { url: string; title: string }[] // źródła blogowe z bazy wiedzy (Layer 0)
   mentionCount?: number // w ilu blogach wspomniane
 }
@@ -189,123 +100,6 @@ function buildQuickPlaces(googlePlaces: any[]): AIPlace[] {
   }))
 }
 
-const Slovenia_SPOTS = ['Bled', 'Bohinj', 'Soča', 'Ljubljana', 'Piran', 'Triglav', 'Kranjska Gora', 'Kobarid', 'Koper', 'Portorož']
-const BUDAPEST_SPOTS = ['Budapeszt', 'Buda', 'Pest', 'Óbuda']
-
-// ——— ANIMACJA SKANOWANIA ———
-function ScanAnimation({ postsScanned, phase }: { postsScanned: number; phase: number }) {
-  const [visibleSpots, setVisibleSpots] = useState<{ name: string; x: number; y: number; alpha: number }[]>([])
-
-  // Punkty na "mapie" Słowenii
-  const mapPoints = [
-    { name: 'Bled', x: 0.28, y: 0.22 },
-    { name: 'Bohinj', x: 0.22, y: 0.28 },
-    { name: 'Soča', x: 0.18, y: 0.38 },
-    { name: 'Ljubljana', x: 0.42, y: 0.42 },
-    { name: 'Triglav', x: 0.25, y: 0.18 },
-    { name: 'Piran', x: 0.28, y: 0.72 },
-    { name: 'Kobarid', x: 0.15, y: 0.32 },
-    { name: 'Kranjska Gora', x: 0.22, y: 0.12 },
-    { name: 'Maribor', x: 0.72, y: 0.18 },
-    { name: 'Koper', x: 0.25, y: 0.78 },
-    { name: 'Budapeszt', x: 0.82, y: 0.28 },
-    { name: 'Portorož', x: 0.22, y: 0.82 },
-  ]
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const spot = mapPoints[Math.floor(Math.random() * mapPoints.length)]
-      setVisibleSpots(prev => {
-        const existing = prev.find(s => s.name === spot.name)
-        if (existing) return prev
-        return [...prev.slice(-6), { ...spot, alpha: 1 }]
-      })
-    }, 600)
-    return () => clearInterval(interval)
-  }, [])
-
-  const phases = [
-    { icon: '🛰️', text: 'Skanowanie Reddit...', color: '#3d7f41' },
-    { icon: '📡', text: `Odebrano ${postsScanned} postów`, color: '#0085cc' },
-    { icon: '🧠', text: 'AI analizuje dane...', color: '#8b5cf6' },
-    { icon: '📍', text: 'Mapowanie rekomendacji...', color: '#e09f4d' },
-  ]
-
-  const currentPhase = phases[Math.min(phase, phases.length - 1)]
-
-  return (
-    <div className="flex flex-col items-center justify-center py-8 px-4">
-      {/* Mapa Słowenii - SVG */}
-      <div className="relative w-full max-w-sm h-48 mb-6">
-        <svg viewBox="0 0 400 220" className="w-full h-full opacity-20">
-          {/* Uproszczony zarys Słowenii */}
-          <path d="M60,80 L80,60 L120,50 L160,45 L200,48 L240,55 L280,60 L320,70 L340,80 L330,100 L310,115 L280,120 L260,130 L240,145 L220,160 L200,170 L180,165 L160,155 L140,150 L120,160 L100,155 L80,140 L65,120 L60,100 Z" fill="#3d7f41" stroke="#3d7f41" strokeWidth="2"/>
-          {/* Węgry */}
-          <path d="M300,50 L380,55 L390,80 L385,110 L370,120 L340,115 L320,100 L310,80 Z" fill="#0085cc" opacity="0.5" stroke="#0085cc" strokeWidth="1"/>
-        </svg>
-
-        {/* Pinezki pojawiające się na mapie */}
-        {visibleSpots.map((spot, i) => (
-          <div
-            key={spot.name}
-            className="absolute flex flex-col items-center animate-fade-up"
-            style={{
-              left: `${spot.x * 100}%`,
-              top: `${spot.y * 100}%`,
-              transform: 'translate(-50%, -100%)',
-            }}
-          >
-            <div className="bg-forest-500 text-white text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap font-medium shadow-lg">
-              {spot.name}
-            </div>
-            <div className="w-1.5 h-1.5 bg-forest-400 rounded-full mt-0.5 animate-pulse" />
-          </div>
-        ))}
-
-        {/* Latający skaner */}
-        <div
-          className="absolute w-full h-0.5 bg-gradient-to-r from-transparent via-forest-400 to-transparent opacity-60"
-          style={{
-            top: `${((Date.now() / 1000) % 1) * 100}%`,
-            animation: 'scanLine 2s linear infinite',
-          }}
-        />
-      </div>
-
-      {/* Status */}
-      <div className="flex items-center gap-3 bg-stone-800/60 border border-stone-700/40 rounded-2xl px-5 py-3 mb-4">
-        <span className="text-2xl animate-pulse-soft">{currentPhase.icon}</span>
-        <div>
-          <p className="text-stone-200 text-sm font-medium">{currentPhase.text}</p>
-          <div className="flex gap-1 mt-1.5">
-            {phases.map((p, i) => (
-              <div
-                key={i}
-                className="h-1 rounded-full transition-all duration-500"
-                style={{
-                  width: i <= phase ? '24px' : '8px',
-                  background: i <= phase ? currentPhase.color : '#44403c',
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <p className="text-stone-600 text-xs text-center">
-        Przeszukuję Reddit, analizuję rekomendacje ekipy...
-      </p>
-
-      <style>{`
-        @keyframes scanLine {
-          0% { top: 0% }
-          100% { top: 100% }
-        }
-      `}</style>
-    </div>
-  )
-}
-
 // ——— KARTA MIEJSCA ———
 function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote, onAddNote, sessionId }: {
   place: AIPlace
@@ -345,8 +139,8 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
               </span>
             )}
             {(place.mentionCount || 0) > 0 && (
-              <span className="text-xs text-amber-400 bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-700/30">
-                📚 {place.mentionCount === 1 ? 'Polecane w blogu' : `Polecane w ${place.mentionCount} blogach`}
+              <span className="text-xs font-semibold text-amber-300 bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/40 shadow-sm shadow-amber-900/20">
+                📚 {place.mentionCount === 1 ? 'Polecane w blogu' : `Polecane w ${place.mentionCount} blogach podróżniczych`}
               </span>
             )}
             {place.verified && (
@@ -533,20 +327,6 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
         </a>
       </div>
 
-      {/* Reddit sources */}
-      {showSources && (place.sources || []).length > 0 && (
-        <div className="space-y-1.5 border-t border-stone-700/40 pt-2">
-          {(place.sources || []).map((s, i) => (
-            <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-2 text-xs text-water-400 hover:text-water-300 transition-colors">
-              <ExternalLink className="w-3 h-3 flex-shrink-0" />
-              <span className="truncate">{s.title}</span>
-              <span className="text-stone-600 flex-shrink-0">↑{s.score}</span>
-            </a>
-          ))}
-        </div>
-      )}
-
       {/* Blog sources (baza wiedzy / Layer 0) */}
       {showSources && (place.blogSources || []).length > 0 && (
         <div className="space-y-1.5 border-t border-stone-700/40 pt-2">
@@ -607,7 +387,6 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
 // ——— GŁÓWNY KOMPONENT ———
 export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props) {
   const [aiPlaces, setAiPlaces] = useState<AIPlace[]>([])
-  const [localGems, setLocalGems] = useState<AIPlace[]>([])
   const [baseLat, setBaseLat] = useState<number | null>(null)
   const [baseLon, setBaseLon] = useState<number | null>(null)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
@@ -615,12 +394,9 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
   const [searchCount, setSearchCount] = useState(0)
   const [fadingOut, setFadingOut] = useState(false)
   const [resultsVisible, setResultsVisible] = useState(false)
-  const [scanPhase, setScanPhase] = useState(0)
-  const [postsScanned, setPostsScanned] = useState(0)
   const [activeRegion, setActiveRegion] = useState<'all' | 'budapest' | 'slovenia'>('all')
   const [showAll, setShowAll] = useState(true)
   const [activeTag, setActiveTag] = useState<string | null>(null)
-  const [activeSource, setActiveSource] = useState<'google' | 'reddit'>('google')
   const [searchMode, setSearchMode] = useState<SearchMode>('standard')
   const [radiusKm, setRadiusKm] = useState(40)
   const [sortBy, setSortBy] = useState<'match' | 'rating' | 'distance'>('match')
@@ -630,7 +406,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
   const [enrichTotal, setEnrichTotal] = useState(0)
   const [error, setError] = useState('')
   const [debugLine, setDebugLine] = useState('')
-  const [redditUnavailable, setRedditUnavailable] = useState(false)
   const sessionId = getSessionId()
 
   const groupActivities = (() => {
@@ -667,19 +442,18 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
       .limit(1)
     if (data && data.length > 0 && (data[0].places || []).length > 0) {
       setAiPlaces(data[0].places || [])
-      setPostsScanned(data[0].posts_analyzed || 0)
       setResultsVisible(true)
     }
   }
 
-  async function saveRecommendations(places: AIPlace[], analyzed: number) {
+  async function saveRecommendations(places: AIPlace[]) {
     // Usuń stare i zapisz nowe
     await supabase.from('ai_recommendations').delete().eq('room_id', room.id)
     await supabase.from('ai_recommendations').insert({
       room_id: room.id,
       region: countryToRegion(room.country || 'Slovenia'),
       places,
-      posts_analyzed: analyzed,
+      posts_analyzed: 0,
     })
   }
 
@@ -690,63 +464,61 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
 
   async function handleSearchMore() {
     setLoadingMore(true)
-    // Szuka kolejnej partii i dodaje do istniejących
+    // Dociąga kolejną pulę miejsc z silnika /api/discover (większy promień)
+    // i wzbogaca je AI, dodając nowe do już pokazanych.
     const region = countryToRegion(room.country || 'Slovenia')
-    let posts: any[] = []
-    try {
-      const redditResult = await fetchRedditFromBrowser(
-        groupActivities,
-        region,
-        room.end_city || 'Ljubljana',
-        null,
-        null,
-        myPrefs.transport,
-        myPrefs.accommodation,
-        myPrefs.intensity,
-        myPrefs.budget || 'any',
-        myPrefs.food || [],
-        room.num_people || 4,
-        [],
-      )
-      posts = redditResult.posts || []
-    } catch {}
-
     const tripDaysMore = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
 
-    const payload = {
-      posts,
-      activities: groupActivities,
-      region,
-      searchMode,
-      transport: myPrefs.transport,
-      accommodation: myPrefs.accommodation,
-      intensity: myPrefs.intensity,
-      numPeople: room.num_people || 4,
-      startDate: room.start_date,
-      endDate: room.end_date,
-      tripDays: tripDaysMore,
-      batch: 2,
-    }
-
     try {
+      // Poszerz promień, by znaleźć miejsca poza dotychczasową pulą.
+      const widerRadius = Math.min(80, radiusKm + 20)
+      const discoverRes = await fetch('/api/discover', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseCity: room.end_city || '', country: room.country || '',
+          activities: groupActivities, radius: widerRadius, sort: sortBy,
+          intensity: myPrefs.intensity, numPeople: room.num_people || 4,
+        }),
+      })
+      if (!discoverRes.ok) { setLoadingMore(false); return }
+      const gData = await discoverRes.json()
+      const fresh = (gData.places || [])
+        .filter((np: any) => np && np.name && !aiPlaces.find(ep => ep.name === np.name))
+        .slice(0, 12)
+        .map((p: any) => {
+          const { sources, ...rest } = p
+          return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
+        })
+      if (fresh.length === 0) { setLoadingMore(false); return }
+
       const res = await fetch('/api/places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          googlePlaces: fresh,
+          activities: groupActivities, region, searchMode,
+          baseCity: room.end_city || '', transport: myPrefs.transport,
+          accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
+          numPeople: room.num_people || 4, startDate: room.start_date,
+          endDate: room.end_date, tripDays: tripDaysMore, batch: 1,
+        }),
       })
       if (res.ok) {
         const data = await res.json()
-        const newPlaces = (data.places || []).filter(
-          (np: AIPlace) => np && np.name && !aiPlaces.find(ep => ep.name === np.name)
-        ).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+        const enriched = (data.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
+        // Scal opisy AI na świeżą pulę (fallback: surowe dane z discover)
+        const byName = new Map(enriched.map((e: AIPlace) => [e.name, e]))
+        const newPlaces = fresh.map((f: AIPlace) => {
+          const e = byName.get(f.name)
+          return e ? { ...f, ...(e as AIPlace), tags: (e as AIPlace).tags || f.tags || [] } : f
+        })
         const updated = [...aiPlaces, ...newPlaces]
         for (const place of newPlaces) {
           await new Promise(r => setTimeout(r, 150))
           setAiPlaces(prev => [...prev, place])
         }
-        await saveRecommendations(updated, posts.length)
+        await saveRecommendations(updated)
       }
     } catch {}
     setLoadingMore(false)
@@ -758,12 +530,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
     setEnriching(false)
     setError('')
     setDebugLine('')
-    setRedditUnavailable(false)
     setAiPlaces([])
-    setLocalGems([])
     setResultsVisible(false)
-    setScanPhase(0)
-    setPostsScanned(0)
     setSearchCount(c => c + 1)
 
     const region = countryToRegion(room.country || 'Slovenia')
@@ -771,149 +539,68 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
     const tripDaysCalc = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
-    const monthCalc = room.start_date ? new Date(room.start_date).getMonth() + 1 : null
 
-    const queryPayload = {
-      activities: groupActivities, baseCity: room.end_city || '', region,
-      transport: myPrefs.transport, accommodation: myPrefs.accommodation,
-      intensity: myPrefs.intensity, numPeople: room.num_people || 4,
-      budget: myPrefs.budget || 'any', food: myPrefs.food || [],
-      searchMode,
-      tripDays: tripDaysCalc, month: monthCalc,
-    }
-
-    // Krok 1: silnik /api/discover (kuracja DeepSeek → weryfikacja Google → ranking)
-    // zastępuje lokalne budowanie zapytań. Reddit leci równolegle (lokalne perełki).
-    setScanPhase(0)
-    setScanPhase(1)
-
+    // Krok 1: silnik /api/discover (baza wiedzy z blogów → kuracja DeepSeek →
+    // weryfikacja Google → ranking) dostarcza pulę miejsc do wzbogacenia.
     let googlePlaces: any[] = []
-    let posts: any[] = []
-    let redditMeta: any = null
-    let generatedQueries: string[] = []
-    let fetchedBaseLat: number | null = null
-    let fetchedBaseLon: number | null = null
 
-    const redditTask = (async () => {
-      let genQueries: string[] = []
-      let genSubreddits: string[] = []
-      try {
-        const rqRes = await fetch('/api/generate-reddit-queries', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queryPayload),
-        })
-        if (rqRes.ok) { const d = await rqRes.json(); genQueries = d.queries || []; genSubreddits = d.subreddits || [] }
-      } catch {}
-      generatedQueries = genQueries
-      return fetchRedditFromBrowser(
-        groupActivities, region, room.end_city || '',
-        tripDaysCalc, monthCalc, myPrefs.transport, myPrefs.accommodation,
-        myPrefs.intensity, myPrefs.budget || 'any', myPrefs.food || [],
-        room.num_people || 4, genQueries, genSubreddits
-      )
-    })()
+    // Mapuje pulę z silnika: pole `sources` ({url,title}) to źródła blogowe —
+    // przenosimy je do `blogSources`, by karta pokazała "Wspomniane w:".
+    const mapDiscover = (arr: any[]) => arr.slice(0, 60).map((p: any) => {
+      const { sources, ...rest } = p
+      return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
+    })
 
     if (isPrefetch) {
       // Tor B: miejsca z /api/discover są już w pamięci (pobrane podczas animacji).
-      // Pomijamy ponowny fetch — mapujemy gotową pulę i pokazujemy ją natychmiast,
-      // a Reddit (lokalne perełki) dolatuje w tle.
-      googlePlaces = (opts!.preGooglePlaces || []).slice(0, 60).map((p: any) => {
-        const { sources, ...rest } = p
-        return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
-      })
-      fetchedBaseLat = opts!.preBaseLat ?? null
-      fetchedBaseLon = opts!.preBaseLon ?? null
-      if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
-      if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
+      // Pomijamy ponowny fetch — mapujemy gotową pulę i pokazujemy ją natychmiast.
+      googlePlaces = mapDiscover(opts!.preGooglePlaces || [])
+      const preLat = opts!.preBaseLat ?? null
+      const preLon = opts!.preBaseLon ?? null
+      if (preLat) setBaseLat(preLat)
+      if (preLon) setBaseLon(preLon)
       if (googlePlaces.length > 0) {
         setAiPlaces(buildQuickPlaces(googlePlaces))
         setResultsVisible(true)
         setLoading(false)
       }
-      const [redditOnly] = await Promise.allSettled([redditTask])
-      if (redditOnly.status === 'fulfilled') {
-        posts = redditOnly.value.posts || []
-        redditMeta = redditOnly.value.meta || null
-        setPostsScanned(posts.length)
-      }
-      setRedditUnavailable(posts.length === 0)
     } else {
-      const [discoverRes, redditRes] = await Promise.allSettled([
-        fetch('/api/discover', {
+      try {
+        const discoverRes = await fetch('/api/discover', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             baseCity: room.end_city || '', country: room.country || '',
             activities: groupActivities, radius, sort: sortBy,
             intensity: myPrefs.intensity, numPeople: room.num_people || 4,
           }),
-        }),
-        redditTask,
-      ])
-
-      if (discoverRes.status === 'fulfilled' && discoverRes.value.ok) {
-        try {
-          const gData = await discoverRes.value.json()
+        })
+        if (discoverRes.ok) {
+          const gData = await discoverRes.json()
           // Cap pilnuje backend (/api/places, MAX_ENRICH_PLACES). Tu bierzemy całą,
           // już posortowaną pulę z silnika — liczba miejsc zależy od ilości znalezionych.
-          googlePlaces = (gData.places || []).slice(0, 60).map((p: any) => {
-            // Silnik zwraca źródła blogowe w polu `sources` ({url,title}). Przenosimy
-            // je do `blogSources`, by nie kolidowały z redditowym `sources` na karcie.
-            const { sources, ...rest } = p
-            return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
-          })
-          fetchedBaseLat = gData.baseLat
-          fetchedBaseLon = gData.baseLon
-          if (fetchedBaseLat) setBaseLat(fetchedBaseLat)
-          if (fetchedBaseLon) setBaseLon(fetchedBaseLon)
-        } catch {}
-      }
-      if (redditRes.status === 'fulfilled') {
-        posts = redditRes.value.posts || []
-        redditMeta = redditRes.value.meta || null
-        setPostsScanned(posts.length)
-      }
-      setRedditUnavailable(posts.length === 0)
+          googlePlaces = mapDiscover(gData.places || [])
+          if (gData.baseLat) setBaseLat(gData.baseLat)
+          if (gData.baseLon) setBaseLon(gData.baseLon)
+        }
+      } catch {}
     }
 
-    setScanPhase(2)
     const hasEarlyGoogleResults = googlePlaces.length > 0
 
     if (hasEarlyGoogleResults) {
-      const quickPlaces = googlePlaces.map((p: any) => ({
-        ...p,
-        tags: p.tags || [],
-        description: p.description || 'Trwa analiza AI...',
-        whyThisGroup: p.whyThisGroup || 'Dopasowanie do profilu grupy: trwa analiza',
-        groupFitNote: p.groupFitNote || 'trwa analiza',
-        bestTime: p.bestTime || 'brak danych',
-        visitTips: p.visitTips || 'brak danych',
-        reviewSummary: p.reviewSummary || 'brak danych',
-        recentReviewHighlights: p.recentReviewHighlights || [],
-      }))
-      setAiPlaces(quickPlaces)
+      setAiPlaces(buildQuickPlaces(googlePlaces))
       setResultsVisible(true)
       setLoading(false)
     }
     setEnriching(true)
 
-    // Krok 3: progressive enrichment — dzielimy pulę na paczki i scalamy wyniki
+    // Krok 2: progressive enrichment — dzielimy pulę na paczki i scalamy wyniki
     // w miarę napływania, żeby opisy AI pojawiały się stopniowo (a nie naraz).
     const keyOf = (p: any) => (p?.googlePlaceId || p?.name || '').toString().toLowerCase().trim()
     try {
-      setScanPhase(3)
-
       if (googlePlaces.length > 0) {
         // Lokalna kopia puli z placeholderami — podmieniamy karty po kluczu.
-        const working: AIPlace[] = googlePlaces.map((p: any) => ({
-          ...p,
-          tags: p.tags || [],
-          description: p.description || 'Trwa analiza AI...',
-          whyThisGroup: p.whyThisGroup || 'Dopasowanie do profilu grupy: trwa analiza',
-          groupFitNote: p.groupFitNote || 'trwa analiza',
-          bestTime: p.bestTime || 'brak danych',
-          visitTips: p.visitTips || 'brak danych',
-          reviewSummary: p.reviewSummary || 'brak danych',
-          recentReviewHighlights: p.recentReviewHighlights || [],
-        }))
+        const working: AIPlace[] = buildQuickPlaces(googlePlaces)
         const idxByKey = new Map<string, number>()
         working.forEach((p, i) => idxByKey.set(keyOf(p), i))
 
@@ -926,17 +613,15 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
 
         setEnrichDone(0)
         setEnrichTotal(googlePlaces.length)
-        let collectedGems: AIPlace[] = []
         let anyParsed = false
         let anyFallback = false
         let lastStatus = 0
 
-        const runChunk = async (chunk: any[], withPosts: boolean) => {
+        const runChunk = async (chunk: any[]) => {
           try {
             const res = await fetch('/api/places', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                posts: withPosts ? posts : [],
                 googlePlaces: chunk,
                 activities: groupActivities, region, searchMode,
                 baseCity: room.end_city || '', transport: myPrefs.transport,
@@ -952,7 +637,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
               enriched = (data.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
               if (data.meta?.parseOk) anyParsed = true
               if (data.meta?.usedFallback) anyFallback = true
-              if (withPosts) collectedGems = (data.localGems || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
             }
             if (enriched.length === 0) {
               // sieć/serwer padł dla tej paczki — zostaw surowe dane Google
@@ -973,55 +657,32 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
           } finally {
             setEnrichDone((d) => Math.min(d + chunk.length, googlePlaces.length))
             setAiPlaces(working.slice())
-            if (collectedGems.length) setLocalGems(collectedGems.slice())
           }
         }
 
-        // Bounded concurrency; posty (Reddit/perełki) tylko z pierwszą paczką.
+        // Bounded concurrency.
         let cursor = 0
         await Promise.all(
           Array.from({ length: Math.min(ENRICH_CONCURRENCY, chunks.length) }, async () => {
             while (cursor < chunks.length) {
               const my = cursor++
-              await runChunk(chunks[my], my === 0)
+              await runChunk(chunks[my])
             }
           }),
         )
 
-        setLocalGems(collectedGems)
         setAiPlaces(working.slice())
-        const queryStat = redditMeta?.queriesTried || generatedQueries.length || 0
         setDebugLine(
-          `Debug: reddit=${posts.length}, google=${googlePlaces.length}, paczki=${chunks.length}, fallback=${anyFallback ? 'tak' : 'nie'}, parse=${anyParsed ? 'ok' : 'fail'}, status=${lastStatus}, queries=${queryStat}`,
+          `Debug: google=${googlePlaces.length}, paczki=${chunks.length}, fallback=${anyFallback ? 'tak' : 'nie'}, parse=${anyParsed ? 'ok' : 'fail'}, status=${lastStatus}`,
         )
         if (anyFallback) setError('Czesc opisow AI sie nie wygenerowala — dla tych miejsc pokazuje dane podstawowe z Google.')
-        await saveRecommendations(working, posts.length)
+        await saveRecommendations(working)
       } else {
-        // Brak miejsc z Google — ścieżka Reddit-only (jeden call).
-        const enrichRes = await fetch('/api/places', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            posts, googlePlaces: [],
-            activities: groupActivities, region, searchMode,
-            baseCity: room.end_city || '', transport: myPrefs.transport,
-            accommodation: myPrefs.accommodation, intensity: myPrefs.intensity,
-            numPeople: room.num_people || 4, startDate: room.start_date,
-            endDate: room.end_date, tripDays: tripDaysCalc, batch: 1,
-          }),
-        })
-        let enrichedPlaces: AIPlace[] = []
-        if (enrichRes.ok) {
-          const data = await enrichRes.json()
-          enrichedPlaces = (data.places || []).map((p: AIPlace) => ({ ...p, tags: p.tags || [] }))
-        } else {
-          setError('AI enrichment zwrocil blad. Pokazuje dane podstawowe.')
-        }
-        if (!hasEarlyGoogleResults) {
-          setFadingOut(true)
-          await new Promise(r => setTimeout(r, 400))
-        }
-        setAiPlaces(enrichedPlaces)
-        await saveRecommendations(enrichedPlaces, posts.length)
+        // Brak miejsc z silnika — pokaż pustą listę z komunikatem.
+        setFadingOut(true)
+        await new Promise(r => setTimeout(r, 400))
+        setAiPlaces([])
+        setError('Nie znaleziono miejsc dla tych preferencji. Spróbuj zwiększyć promień lub zmienić aktywności.')
       }
 
       setLoading(false)
@@ -1103,7 +764,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
         <h2 className="font-display text-lg font-semibold text-stone-100">Rekomendacje miejsc</h2>
         {aiPlaces.length > 0 && (
           <span className="text-xs text-stone-500 bg-stone-800 px-2.5 py-1 rounded-full">
-            {postsScanned} postów
+            {aiPlaces.length} miejsc
           </span>
         )}
       </div>
@@ -1152,7 +813,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
           <p className="text-[11px] text-stone-500 mt-2 px-1">
             {searchMode === 'standard'
               ? 'Tryb standard: sprawdzone i popularne miejsca + AI podsumowanie dla całej ekipy.'
-              : 'Tryb research: mocniejszy nacisk na lokalne perełki i mniej oczywiste rekomendacje.'}
+              : 'Tryb research: mocniejszy nacisk na mniej oczywiste, lokalne miejsca i naturę.'}
           </p>
         </div>
       )}
@@ -1225,7 +886,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
         transition: 'opacity .5s ease',
         display: loading ? 'block' : 'none',
       }}>
-        <GlobeAnimation key={searchCount} postsScanned={postsScanned} phase={scanPhase} totalPosts={25} />
+        <GlobeAnimation key={searchCount} />
       </div>
 
       {/* Błąd */}
@@ -1242,30 +903,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
         </p>
       )}
 
-      {/* Zakładki Google / Reddit */}
-      {!loading && (aiPlaces.length > 0 || localGems.length > 0) && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveSource('google')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-              activeSource === 'google' ? 'bg-water-900/30 border-water-600/40 text-water-300' : 'bg-stone-800/40 border-stone-700/40 text-stone-500'
-            }`}
-          >
-            ✅ Google Places {aiPlaces.length > 0 && <span className="text-xs opacity-60">({aiPlaces.length})</span>}
-          </button>
-          <button
-            onClick={() => setActiveSource('reddit')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-              activeSource === 'reddit' ? 'bg-amber-900/30 border-amber-600/40 text-amber-300' : 'bg-stone-800/40 border-stone-700/40 text-stone-500'
-            }`}
-          >
-            🔥 Lokalne perełki {localGems.length > 0 && <span className="text-xs opacity-60">({localGems.length})</span>}
-          </button>
-        </div>
-      )}
-
       {/* Filtry kategorii */}
-      {!loading && activeSource === 'google' && aiPlaces.length > 0 && (
+      {!loading && aiPlaces.length > 0 && (
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setActiveTag(null)}
@@ -1290,7 +929,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
       )}
 
       {/* Wyniki Google */}
-      {!loading && activeSource === 'google' && aiPlaces.length > 0 && (
+      {!loading && aiPlaces.length > 0 && (
         <div className="space-y-4" style={{
           opacity: resultsVisible ? 1 : 0,
           transform: resultsVisible ? 'translateY(0)' : 'translateY(12px)',
@@ -1344,36 +983,6 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
             </div>
           )}
         </div>
-      )}
-
-      {/* Wyniki Reddit / lokalne perełki */}
-      {!loading && activeSource === 'reddit' && localGems.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider">
-            Lokalne perełki ({localGems.length})
-          </p>
-          {localGems.map(place => (
-            <PlaceCard
-              key={place.name}
-              place={place}
-              groupActivities={groupActivities}
-              isSaved={savedPlaces.some(s => s.place_name === place.name)}
-              onSave={() => savePlace(place)}
-              savedData={savedPlaces.find(s => s.place_name === place.name)}
-              onVote={() => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) votePlace(sp.id, sp.voters as string[], sp.votes) }}
-              onAddNote={text => { const sp = savedPlaces.find(s => s.place_name === place.name); if (sp) addNote(sp.id, text) }}
-              sessionId={sessionId}
-            />
-          ))}
-        </div>
-      )}
-
-      {!loading && activeSource === 'reddit' && localGems.length === 0 && (
-        <p className="text-xs text-stone-500 bg-stone-800/40 border border-stone-700/40 rounded-xl px-4 py-3">
-          {redditUnavailable
-            ? 'Reddit jako źródło jest chwilowo niedostępny — rekomendacje opieramy na Google Places. Lokalne perełki wrócą, gdy źródło znów zadziała.'
-            : 'Brak lokalnych perełek dla tego wyszukiwania. Spróbuj trybu Research lub odśwież wyniki.'}
-        </p>
       )}
 
       {/* Zapisane */}

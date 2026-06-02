@@ -332,17 +332,19 @@ function computeScore(p: {
   const activityScore = p.matchedActivities.length > 0
     ? clamp01(0.6 + 0.2 * p.matchedActivities.length)
     : 0.3
-  // Sygnał redakcyjny: skuratowane z blogów (Layer 0). Bazowo 0.5 za jedną
-  // wzmiankę, rośnie z liczbą różnych blogów (mention_count) do ~1.0 przy ~7.
+  // Sygnał redakcyjny: skuratowane z blogów (Layer 0). To nasz najmocniejszy
+  // wyróżnik jakości, więc dajemy mu wysoką wagę. Bazowo 0.6 za jedną wzmiankę,
+  // rośnie z liczbą różnych blogów (mention_count) do 1.0 — krzywa znormalizowana
+  // do ~5 wzmianek (tyle ma dziś najczęściej wspominane miejsce w bazie).
   const mentions = p.mentionCount ?? (p.curated ? 1 : 0)
-  const mentionNorm = clamp01(Math.log10(mentions + 1) / Math.log10(8))
-  const editorialScore = p.curated ? clamp01(0.5 + 0.5 * mentionNorm) : 0
+  const mentionNorm = clamp01(Math.log10(mentions + 1) / Math.log10(6))
+  const editorialScore = p.curated ? clamp01(0.6 + 0.4 * mentionNorm) : 0
   const score =
-    0.38 * activityScore +
-    0.18 * ratingScore +
-    0.14 * popularityScore +
-    0.14 * proximityScore +
-    0.16 * editorialScore
+    0.34 * activityScore +
+    0.16 * ratingScore +
+    0.12 * popularityScore +
+    0.12 * proximityScore +
+    0.26 * editorialScore
   return Math.round(score * 1000) / 10 // 0–100, 1 miejsce po przecinku
 }
 

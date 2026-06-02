@@ -3,15 +3,13 @@
 import { useEffect, useState } from 'react'
 
 interface Props {
-  phase: number
-  postsScanned: number
-  totalPosts: number
+  phase?: number
 }
 
 const STEPS = [
-  { dot: '#6366f1', text: 'Generuję zapytania do Reddit...' },
-  { dot: '#4ade80', text: 'Pobieram posty z r/Slovenia, r/travel...' },
-  { dot: '#22d3ee', text: 'DeepSeek analizuje treść postów...' },
+  { dot: '#6366f1', text: 'Przeszukuję bazę sprawdzonych miejsc...' },
+  { dot: '#4ade80', text: 'Sprawdzam oceny i opinie w Google Maps...' },
+  { dot: '#22d3ee', text: 'DeepSeek dobiera miejsca dla ekipy...' },
   { dot: '#fbbf24', text: 'Dopasowuję do preferencji ekipy...' },
   { dot: '#f472b6', text: 'Generuję rekomendacje...', pulse: true },
 ]
@@ -34,7 +32,7 @@ const PATHS = [
 ]
 const BAR_TARGETS = [18, 42, 63, 81, 93]
 
-export default function GlobeAnimation({ postsScanned }: Props) {
+export default function GlobeAnimation(_props: Props) {
   const [segKeys, setSegKeys] = useState<{ i: number }[]>([])
   const [visiblePins, setVisiblePins] = useState<number[]>([])
   const [visibleSteps, setVisibleSteps] = useState<number[]>([])
@@ -135,11 +133,6 @@ export default function GlobeAnimation({ postsScanned }: Props) {
 
         <div className="flex items-center justify-between mb-2">
           <span className="text-stone-200 text-sm font-medium tracking-tight">Analizuję rekomendacje...</span>
-          {postsScanned > 0 && (
-            <span className="text-xs text-forest-400 bg-forest-900/30 border border-forest-800/40 px-2.5 py-0.5 rounded-full font-mono">
-              {postsScanned} postów
-            </span>
-          )}
         </div>
 
         <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-3">

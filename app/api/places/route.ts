@@ -56,7 +56,7 @@ async function mapLimit<T, R>(
 // (np. wymyślone przez AI "bar", "góry", "bistro") jest odrzucane.
 const KNOWN_TAGS = new Set([
   'sup', 'trekking', 'food', 'sunset', 'sightseeing', 'relax',
-  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent',
+  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent', 'petfriendly',
 ])
 
 function whitelistTags(...sources: unknown[]): string[] {

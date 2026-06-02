@@ -54,7 +54,7 @@ type DiscoverPlace = {
 // ——————————————————————————————————————————————
 const KNOWN_ACTIVITIES = new Set([
   'sup', 'trekking', 'food', 'sunset', 'sightseeing', 'relax',
-  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent',
+  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent', 'petfriendly',
 ])
 
 // Destynacje (NIE usługi) — zapytania nastawione na cele podróży,
@@ -72,6 +72,7 @@ const ACTIVITY_DEST_QUERIES: Record<string, string[]> = {
   cycling: ['scenic cycling route', 'bike path nature'],
   van: ['campsite for campervan', 'panoramic camper stop'],
   tent: ['campground nature', 'tent camping site'],
+  petfriendly: ['dog friendly cafe', 'pet friendly park trail'],
 }
 
 // Typy Google, które są usługami/sklepami — nie chcemy ich jako "atrakcji"

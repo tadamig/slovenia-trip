@@ -36,23 +36,43 @@ const supabaseAdmin =
 // ——— Whitelist aktywności = jedyne dozwolone tagi (zgodne z UI / discover) ———
 const KNOWN_ACTIVITIES = new Set([
   'sup', 'trekking', 'food', 'sunset', 'sightseeing', 'relax',
-  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent',
+  'photo', 'markets', 'nightlife', 'cycling', 'van', 'tent', 'petfriendly',
 ])
 
-// Szablony zapytań blogowych per aktywność (cele podróży, nie usługi)
+// Statyczne banki fraz blogowych per aktywność (FALLBACK, gdy LLM padnie).
+// Punktowe, wielokątowe — cele podróży, nie usługi. Generator LLM
+// (generateBlogQueries) ma priorytet i dokłada logikę kombinacji aktywności.
 const ACTIVITY_QUERY_TERMS: Record<string, string[]> = {
-  sup: ['best lakes for SUP paddleboarding', 'best swimming spots'],
-  trekking: ['best hiking trails', 'most beautiful gorges and waterfalls'],
-  food: ['best traditional restaurants', 'top local food spots'],
-  sunset: ['best sunset viewpoints'],
-  sightseeing: ['top attractions and landmarks', 'must see places'],
-  relax: ['best thermal spas and wellness'],
-  photo: ['most photogenic spots'],
-  markets: ['best local and farmers markets'],
-  nightlife: ['best bars and nightlife'],
-  cycling: ['best cycling routes'],
-  van: ['best campervan stops and campsites'],
-  tent: ['best campgrounds for tents'],
+  sup: ['best lakes for SUP paddleboarding', 'best natural swimming spots', 'most beautiful lakes to swim'],
+  trekking: ['best hiking trails', 'most beautiful gorges and waterfalls', 'best mountain viewpoint hikes', 'easy scenic walks in nature'],
+  food: ['best traditional restaurants', 'top local food spots locals love', 'best authentic regional cuisine', 'must-eat street food'],
+  sunset: ['best sunset viewpoints', 'most beautiful panoramic viewpoints'],
+  sightseeing: ['top historic landmarks and old town', 'must see attractions', 'best museums and galleries worth visiting'],
+  relax: ['best thermal spas and wellness', 'most relaxing slow-travel spots', 'cozy cafes and quiet retreats'],
+  photo: ['most photogenic spots', 'best scenic viewpoints for photography', 'most instagrammable places'],
+  markets: ['best local farmers markets', 'best food market halls', 'artisan and flea markets'],
+  nightlife: ['best craft beer and cocktail bars', 'best local pubs', 'live music venues and clubs'],
+  cycling: ['best scenic cycling routes', 'best bike paths through nature'],
+  van: ['best campervan stops and campsites', 'most scenic camper overnight spots'],
+  tent: ['best campgrounds for tents', 'best wild camping spots in nature'],
+  petfriendly: ['best dog-friendly places to visit', 'pet-friendly trails and cafes'],
+}
+
+// Semantyka aktywności (zgodna z etykietami onboardingu) — kontekst dla LLM.
+const ACTIVITY_MEANING: Record<string, string> = {
+  sup: 'stand-up paddleboarding and natural swimming spots',
+  trekking: 'hiking trails, gorges, waterfalls, mountain viewpoints',
+  food: 'local restaurants and traditional regional cuisine',
+  sunset: 'sunset and panoramic viewpoints',
+  sightseeing: 'historic landmarks, old town, museums and galleries',
+  relax: 'wellness, thermal spas, slow-travel, cozy quiet spots',
+  photo: 'photogenic and scenic spots',
+  markets: 'local farmers, food, flea and artisan markets',
+  nightlife: 'bars, pubs, cocktail/craft beer venues, clubs',
+  cycling: 'scenic cycling and bike routes',
+  van: 'campervan stops and campsites',
+  tent: 'tent campgrounds and wild camping',
+  petfriendly: 'dog/pet-friendly places, trails and cafes',
 }
 
 // Duże agregatory / serwisy z prawami do bazy danych — NIE scrape'ujemy
@@ -221,6 +241,84 @@ async function extractPlaceNames(text: string, activity: string, city: string, c
   }
 }
 
+// DeepSeek: wygeneruj punktowe FRAZY blogowe dopasowane do wybranych aktywności
+// grupy, z logiką kombinacji (food+nightlife → gastropuby/wine bary itd.).
+// 1 wywołanie na seed. Zwraca { aktywność: [frazy] }. Fallback = ACTIVITY_QUERY_TERMS.
+async function generateBlogQueries(
+  city: string,
+  country: string,
+  activities: string[],
+): Promise<Record<string, string[]>> {
+  if (!DEEPSEEK_API_KEY || !activities.length) return {}
+  const list = activities.map((a) => `- ${a}: ${ACTIVITY_MEANING[a] || a}`).join('\n')
+  const prompt = [
+    `Planujemy wyjazd grupowy do: ${city || country}, ${country}.`,
+    'Grupa wybrała te zainteresowania (klucz: znaczenie):',
+    list,
+    '',
+    'ZADANIE: dla KAŻDEGO zainteresowania wypisz 2-4 punktowe TEMATY wyszukiwań',
+    'po ANGIELSKU, którymi znajdziemy artykuły blogowe z konkretnymi miejscami.',
+    'ZASADY:',
+    '- Najpierw fraza bazowa (rdzeń aktywności), potem ewentualne kąty kombinacji.',
+    '- Wykorzystaj logikę łączenia zainteresowań, gdy ma to sens:',
+    '  * food + nightlife → gastropubs, wine bars, craft beer with food',
+    '  * food + markets → street food, food halls, market eateries',
+    '  * trekking + photo → most scenic photogenic trails and viewpoints',
+    '  * relax + food → cozy cafes, slow-food spots, wineries',
+    '  * sup/sunset + photo → photogenic lakes and sunset viewpoints',
+    '- NIGDY nie zawężaj rdzenia: "food" musi nadal dać normalne lokalne restauracje,',
+    '  "markets" musi zostać TARGAMI (nie sklepami/supermarketami).',
+    '- Tematy bez nazwy miasta, bez słów "blog"/"near". Krótkie (3-9 słów).',
+    '- Klucze obiektu = DOKŁADNIE podane zainteresowania (te same stringi).',
+    'Zwróć WYŁĄCZNIE JSON: {"queries":{"<aktywność>":["temat 1","temat 2"]}}',
+  ].join('\n')
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 30000)
+  try {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 700,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'Zawsze zwracasz tylko jeden poprawny obiekt JSON.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return {}
+    const data = await res.json()
+    const parsed = parseJsonObject(data.choices?.[0]?.message?.content || '{}')
+    const queries = parsed && typeof parsed.queries === 'object' ? (parsed.queries as Record<string, unknown>) : null
+    if (!queries) return {}
+    const out: Record<string, string[]> = {}
+    for (const act of activities) {
+      const raw = queries[act]
+      if (!Array.isArray(raw)) continue
+      const seen = new Set<string>()
+      const clean: string[] = []
+      for (const v of raw) {
+        const s = typeof v === 'string' ? v.trim() : ''
+        if (s.length < 4 || s.length > 90) continue
+        const key = s.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        clean.push(s)
+        if (clean.length >= 4) break
+      }
+      if (clean.length) out[act] = clean
+    }
+    return out
+  } catch {
+    return {}
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 async function geocodeCity(city: string, country: string): Promise<{ lat: number; lon: number } | null> {
   if (!GOOGLE_API_KEY) return null
   const res = await fetchWithTimeout(
@@ -376,6 +474,8 @@ export async function POST(request: NextRequest) {
     updated: 0,
     skippedQuality: 0,
     errors: 0,
+    queriesLLM: 0,
+    queriesStatic: 0,
   }
   const log: string[] = []
 
@@ -388,14 +488,22 @@ export async function POST(request: NextRequest) {
     const coords = await geocodeCity(city, country)
     if (!coords) { log.push(`geocode failed: ${city}, ${country}`); continue }
 
+    // Hybryda: LLM generuje frazy dopasowane do zestawu aktywności grupy.
+    // Gdy budżet ciasny lub LLM padnie → statyczny fallback per aktywność.
+    const llmQueries = timeLeft() > 35000 ? await generateBlogQueries(city, country, acts) : {}
+
     for (const activity of acts) {
       if (timeLeft() < 6000) { log.push('time budget reached'); break outer }
-      const terms = ACTIVITY_QUERY_TERMS[activity] || []
+      const llm = llmQueries[activity]
+      const useLLM = Array.isArray(llm) && llm.length > 0
+      const terms = useLLM ? llm! : (ACTIVITY_QUERY_TERMS[activity] || [])
+      if (useLLM) stats.queriesLLM += terms.length
+      else stats.queriesStatic += terms.length
       // Zbierz URL-e blogów z kilku zapytań
       const urls: SourceRef[] = []
       const seenUrls = new Set<string>()
       for (const term of terms) {
-        const q = `${term} near ${city || country} ${country} blog`
+        const q = [term, city, country, 'travel guide'].filter(Boolean).join(' ')
         const results = await searchWeb(q, BLOG_RESULTS_PER_QUERY)
         for (let i = 0; i < results.length; i++) {
           const r = results[i]

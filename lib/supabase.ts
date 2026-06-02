@@ -52,6 +52,25 @@ export type PackingItem = {
   added_by: string
   added_by_session: string
   created_at: string
+  // Pakowanie 2.0
+  scope: 'shared' | 'personal'
+  owner_session: string | null
+  ai_generated: boolean
+  ai_reason: string | null
+  qty: string | null
+  shared_gear: boolean
+  claimed_by: string | null
+  claimed_by_name: string | null
+}
+
+export type PackingProfile = {
+  id: string
+  room_id: string
+  session_id: string
+  gender: 'female' | 'male' | 'other' | 'unspecified' | null
+  toggles: Record<string, boolean>
+  created_at: string
+  updated_at: string
 }
 
 export type SavedPlace = {

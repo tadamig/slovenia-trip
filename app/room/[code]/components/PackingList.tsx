@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { supabase, PackingItem, Room, UserPreference } from '@/lib/supabase'
+import { useState, useEffect, useRef } from 'react'
+import { supabase, PackingItem, PackingProfile, Room, UserPreference } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
-import { Plus, Check, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
+import {
+  Plus, Check, Trash2, ChevronDown, ChevronRight, RefreshCw,
+  Sparkles, Hand, Loader2, Cloud, User,
+} from 'lucide-react'
 
 const CATEGORIES = [
   { id: 'sprzet', label: '🏄 Sprzęt' },
@@ -14,106 +17,27 @@ const CATEGORIES = [
   { id: 'inne', label: '📦 Inne' },
 ]
 
-// Baza elementów powiązana z aktywnościami i noclegiem
-type ItemDef = {
-  category: string
-  name: string
-  activities?: string[]   // pokaż jeśli ekipa wybrała DOWOLNĄ z tych aktywności
-  accommodation?: string[] // pokaż jeśli nocleg pasuje
-  always?: boolean         // zawsze pokaż
-}
-
-const ITEM_DATABASE: ItemDef[] = [
-  // ——— ZAWSZE ———
-  { category: 'dokumenty', name: 'Dowody osobiste / paszporty', always: true },
-  { category: 'dokumenty', name: 'Karta EKUZ (ubezpieczenie EU)', always: true },
-  { category: 'dokumenty', name: 'Prawo jazdy', always: true },
-  { category: 'dokumenty', name: 'Ubezpieczenie samochodu (OC/AC)', always: true },
-  { category: 'dokumenty', name: 'Aplikacja z mapami offline (Maps.me)', always: true },
-  { category: 'inne', name: 'Powerbank', always: true },
-  { category: 'inne', name: 'Adapter do gniazdek (jeśli potrzebny)', always: true },
-  { category: 'inne', name: 'Apteczka pierwszej pomocy', always: true },
-  { category: 'ubrania', name: 'Odzież przeciwdeszczowa / ponczo', always: true },
-  { category: 'ubrania', name: 'Ciepła bluza / polar na wieczór', always: true },
-  { category: 'ubrania', name: 'Strój kąpielowy', always: true },
-  { category: 'ubrania', name: 'Wygodne buty na co dzień', always: true },
-  { category: 'inne', name: 'Krem z filtrem SPF 50+', always: true },
-
-  // ——— SUP ———
-  { category: 'sprzet', name: 'Deski SUP (nadmuchiwane)', activities: ['sup'] },
-  { category: 'sprzet', name: 'Wiosła SUP', activities: ['sup'] },
-  { category: 'sprzet', name: 'Pompa do SUP (elektryczna lub ręczna)', activities: ['sup'] },
-  { category: 'sprzet', name: 'Smycze do desek SUP', activities: ['sup'] },
-  { category: 'sprzet', name: 'Kamizelki asekuracyjne', activities: ['sup'] },
-  { category: 'sprzet', name: 'Wodoodporny worek / dry bag', activities: ['sup'] },
-  { category: 'sprzet', name: 'Buty do wody (neoprenowe)', activities: ['sup'] },
-  { category: 'ubrania', name: 'Pianka neoprenowa (jeśli zimna woda)', activities: ['sup'] },
-  { category: 'inne', name: 'Wodoodporna obudowa na telefon', activities: ['sup'] },
-
-  // ——— TREKKING ———
-  { category: 'sprzet', name: 'Buty trekkingowe (za kostkę)', activities: ['trekking'] },
-  { category: 'sprzet', name: 'Plecak trekkingowy 20-30L', activities: ['trekking'] },
-  { category: 'sprzet', name: 'Kijki trekkingowe', activities: ['trekking'] },
-  { category: 'sprzet', name: 'Mapa / GPX tras (Mapy.cz)', activities: ['trekking'] },
-  { category: 'sprzet', name: 'Czołówka z zapasowymi bateriami', activities: ['trekking'] },
-  { category: 'ubrania', name: 'Getry / długie spodnie trekkingowe', activities: ['trekking'] },
-  { category: 'inne', name: 'Płyn na komary i kleszcze', activities: ['trekking'] },
-  { category: 'inne', name: 'Plastry i bandaże na otarcia', activities: ['trekking'] },
-
-  // ——— ROWER ———
-  { category: 'sprzet', name: 'Rowery / e-bike', activities: ['cycling'] },
-  { category: 'sprzet', name: 'Kask rowerowy', activities: ['cycling'] },
-  { category: 'sprzet', name: 'Zapięcie rowerowe / U-lock', activities: ['cycling'] },
-  { category: 'sprzet', name: 'Pompka rowerowa + łatki', activities: ['cycling'] },
-  { category: 'sprzet', name: 'Uchwyt na telefon do kierownicy', activities: ['cycling'] },
-
-  // ——— FOTO ———
-  { category: 'sprzet', name: 'Statyw fotograficzny', activities: ['photo', 'sunset'] },
-  { category: 'sprzet', name: 'Dodatkowe baterie do aparatu', activities: ['photo'] },
-  { category: 'sprzet', name: 'Karty pamięci (zapasowe)', activities: ['photo'] },
-  { category: 'inne', name: 'Filtr ND do zdjęć wody', activities: ['photo', 'sup'] },
-
-  // ——— JEDZENIE ———
-  { category: 'jedzenie', name: 'Kuchenka turystyczna + gaz', activities: ['food', 'markets'] },
-  { category: 'jedzenie', name: 'Naczynia i sztućce turystyczne', activities: ['food'] },
-  { category: 'jedzenie', name: 'Deska do krojenia + nóż', activities: ['food'] },
-  { category: 'jedzenie', name: 'Torba termiczna / lodówka samochodowa', activities: ['food'] },
-  { category: 'jedzenie', name: 'Pojemniki na żywność', activities: ['food'] },
-  { category: 'jedzenie', name: 'Lokalne przyprawy (zioła itp.)', activities: ['food', 'markets'] },
-
-  // ——— NOCLEG: NAMIOT ———
-  { category: 'nocleg', name: 'Namiot (+ śledzie, miotełka)', accommodation: ['tent'] },
-  { category: 'nocleg', name: 'Śpiwory (sezonowe)', accommodation: ['tent'] },
-  { category: 'nocleg', name: 'Mata izolacyjna / karimat', accommodation: ['tent'] },
-  { category: 'nocleg', name: 'Kuchenka turystyczna + gaz', accommodation: ['tent'] },
-  { category: 'nocleg', name: 'Latarka + świeczki', accommodation: ['tent'] },
-  { category: 'nocleg', name: 'Sznurek do rozwieszania prania', accommodation: ['tent'] },
-
-  // ——— NOCLEG: VAN / KAMPER ———
-  { category: 'nocleg', name: 'Materace / poduszki', accommodation: ['van'] },
-  { category: 'nocleg', name: 'Śpiwory lub kołdry', accommodation: ['van'] },
-  { category: 'nocleg', name: 'Zasłony / rolety na szyby', accommodation: ['van'] },
-  { category: 'nocleg', name: 'Kabel zasilający 12V', accommodation: ['van'] },
-  { category: 'nocleg', name: 'Przenośna toaleta / shovel', accommodation: ['van'] },
-  { category: 'nocleg', name: 'Pojemnik na wodę (20L)', accommodation: ['van'] },
-
-  // ——— NOCLEG: AIRBNB / DOMKI ———
-  { category: 'nocleg', name: 'Kłódka na bagaż', accommodation: ['airbnb'] },
-  { category: 'nocleg', name: 'Ręczniki (własne, na wszelki wypadek)', accommodation: ['airbnb'] },
-
-  // ——— NOCLEG: HOTEL / HOSTEL ———
-  { category: 'nocleg', name: 'Kłódka do szafki w hostelu', accommodation: ['hotel'] },
-  { category: 'nocleg', name: 'Zatyczki do uszu', accommodation: ['hotel'] },
-  { category: 'nocleg', name: 'Maska na oczy do spania', accommodation: ['hotel'] },
+const GENDER_OPTIONS = [
+  { id: 'female', label: '♀ Kobieta' },
+  { id: 'male', label: '♂ Mężczyzna' },
+  { id: 'other', label: '⚧ Inne' },
+  { id: 'unspecified', label: '🙈 Wolę nie podawać' },
 ]
 
-function buildSmartList(activities: string[], accommodation: string): ItemDef[] {
-  return ITEM_DATABASE.filter(item => {
-    if (item.always) return true
-    if (item.activities && item.activities.some(a => activities.includes(a))) return true
-    if (item.accommodation && item.accommodation.includes(accommodation)) return true
-    return false
-  })
+const TOGGLE_OPTIONS = [
+  { id: 'ownMeds', label: '💊 Biorę własne leki' },
+  { id: 'cosmetics', label: '🧴 Rozbudowana kosmetyczka' },
+  { id: 'contactLenses', label: '👓 Soczewki / okulary' },
+  { id: 'electronics', label: '💻 Laptop / tablet' },
+  { id: 'makeup', label: '💄 Makijaż' },
+]
+
+type AiItemResponse = {
+  category: string
+  name: string
+  qty: string | null
+  ai_reason: string | null
+  shared_gear?: boolean
 }
 
 interface Props {
@@ -125,15 +49,28 @@ interface Props {
 export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
   const [items, setItems] = useState<PackingItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<'personal' | 'shared'>('personal')
+  const [profile, setProfile] = useState<PackingProfile | null>(null)
+  const [weatherSummary, setWeatherSummary] = useState<string | null>(null)
+
+  const [showProfileForm, setShowProfileForm] = useState(false)
+  const [formGender, setFormGender] = useState<string>('unspecified')
+  const [formToggles, setFormToggles] = useState<Record<string, boolean>>({})
+
+  const [generatingPersonal, setGeneratingPersonal] = useState(false)
+  const [generatingShared, setGeneratingShared] = useState(false)
+
   const [newItemText, setNewItemText] = useState('')
-  const [newItemCategory, setNewItemCategory] = useState('inne')
-  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const [newItemCategory, setNewItemCategory] = useState('ubrania')
   const [adding, setAdding] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
-  const [reseeding, setReseeding] = useState(false)
-  const sessionId = getSessionId()
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
 
-  // Agreguj aktywności z ekipy (większość głosów) + nocleg z mojego profilu
+  const sessionId = getSessionId()
+  const myName = getSessionName()
+  const autoRan = useRef(false)
+
+  // Agregacja aktywności ekipy (jak wcześniej)
   const groupActivities = (() => {
     const completed = allPrefs.filter(p => p.completed)
     if (completed.length === 0) return myPrefs.activities || []
@@ -142,10 +79,12 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
     return Object.entries(counts).filter(([, c]) => c >= 1).map(([id]) => id)
   })()
 
-  const accommodation = myPrefs.accommodation || 'hotel'
+  const myPersonal = items.filter(i => i.scope === 'personal' && i.owner_session === sessionId)
+  const shared = items.filter(i => i.scope === 'shared')
+  const visible = view === 'personal' ? myPersonal : shared
 
   useEffect(() => {
-    loadItems()
+    init()
     const channel = supabase
       .channel(`packing:${room.id}`)
       .on('postgres_changes', {
@@ -154,73 +93,249 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
       }, (payload) => {
         if (payload.eventType === 'INSERT') {
           const incoming = payload.new as PackingItem
+          // pomijamy cudze pozycje osobiste (prywatność na poziomie UI)
+          if (incoming.scope === 'personal' && incoming.owner_session !== sessionId) return
           setItems(prev => prev.some(i => i.id === incoming.id) ? prev : [...prev, incoming])
+        } else if (payload.eventType === 'UPDATE') {
+          const updated = payload.new as PackingItem
+          if (updated.scope === 'personal' && updated.owner_session !== sessionId) return
+          setItems(prev => prev.map(i => i.id === updated.id ? updated : i))
+        } else if (payload.eventType === 'DELETE') {
+          setItems(prev => prev.filter(i => i.id !== (payload.old as { id: string }).id))
         }
-        else if (payload.eventType === 'UPDATE') setItems(prev => prev.map(i => i.id === (payload.new as PackingItem).id ? payload.new as PackingItem : i))
-        else if (payload.eventType === 'DELETE') setItems(prev => prev.filter(i => i.id !== payload.old.id))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id])
 
-  async function loadItems() {
+  async function init() {
     setLoading(true)
-    const { data } = await supabase
-      .from('packing_items')
-      .select('*')
-      .eq('room_id', room.id)
-      .order('created_at', { ascending: true })
+    const [itemsRes, profRes, metaRes] = await Promise.all([
+      supabase
+        .from('packing_items')
+        .select('*')
+        .eq('room_id', room.id)
+        .or(`scope.eq.shared,owner_session.eq.${sessionId}`)
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('packing_profiles')
+        .select('*')
+        .eq('room_id', room.id)
+        .eq('session_id', sessionId)
+        .maybeSingle(),
+      supabase
+        .from('packing_meta')
+        .select('*')
+        .eq('room_id', room.id)
+        .maybeSingle(),
+    ])
 
-    if (data && data.length === 0) {
-      await seedItems()
-    } else {
-      setItems(data || [])
+    const loaded = (itemsRes.data || []) as PackingItem[]
+    const prof = (profRes.data || null) as PackingProfile | null
+    const meta = metaRes.data as { shared_generated_at: string | null; weather_summary: string | null } | null
+
+    setItems(loaded)
+    setProfile(prof)
+    if (prof) {
+      setFormGender(prof.gender || 'unspecified')
+      setFormToggles(prof.toggles || {})
     }
+    if (meta?.weather_summary) setWeatherSummary(meta.weather_summary)
     setLoading(false)
+
+    if (autoRan.current) return
+    autoRan.current = true
+
+    const myPers = loaded.filter(i => i.scope === 'personal' && i.owner_session === sessionId)
+    const aiShared = loaded.filter(i => i.scope === 'shared' && i.ai_generated)
+
+    // Lista osobista: jeśli pusta → generuj (lub poproś o profil)
+    if (myPers.length === 0) {
+      if (prof) generatePersonal(prof, loaded)
+      else setShowProfileForm(true)
+    }
+
+    // Lista wspólna AI: generujemy raz na pokój
+    if (aiShared.length === 0 && !meta?.shared_generated_at) {
+      generateShared(loaded)
+    }
   }
 
-  async function seedItems() {
-    const smartList = buildSmartList(groupActivities, accommodation)
-    const toInsert = smartList.map(item => ({
-      category: item.category,
-      name: item.name,
-      checked: false,
+  function existingNamesFrom(list: PackingItem[]): string[] {
+    return Array.from(new Set(list.map(i => i.name.toLowerCase())))
+  }
+
+  async function generatePersonal(prof: PackingProfile, currentItems: PackingItem[]) {
+    if (generatingPersonal) return
+    setGeneratingPersonal(true)
+    try {
+      const res = await fetch('/api/packing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'personal',
+          room,
+          profile: { gender: prof.gender, toggles: prof.toggles },
+          person: {
+            user_name: myPrefs.user_name,
+            activities: myPrefs.activities,
+            intensity: myPrefs.intensity,
+            accommodation: myPrefs.accommodation,
+            budget: myPrefs.budget,
+            food: myPrefs.food,
+          },
+          existingNames: existingNamesFrom(currentItems),
+        }),
+      })
+      const data = await res.json()
+      if (data?.weatherSummary) setWeatherSummary(data.weatherSummary)
+      const aiItems: AiItemResponse[] = Array.isArray(data?.items) ? data.items : []
+      if (aiItems.length === 0) return
+      const toInsert = aiItems.map(it => ({
+        room_id: room.id,
+        category: it.category,
+        name: it.name,
+        checked: false,
+        added_by: 'AI',
+        added_by_session: 'ai',
+        scope: 'personal',
+        owner_session: sessionId,
+        ai_generated: true,
+        ai_reason: it.ai_reason,
+        qty: it.qty,
+      }))
+      const { data: inserted } = await supabase.from('packing_items').insert(toInsert).select()
+      if (inserted) mergeItems(inserted as PackingItem[])
+    } finally {
+      setGeneratingPersonal(false)
+    }
+  }
+
+  async function generateShared(currentItems: PackingItem[]) {
+    if (generatingShared) return
+    setGeneratingShared(true)
+    try {
+      const sharedNames = existingNamesFrom(currentItems.filter(i => i.scope === 'shared'))
+      const res = await fetch('/api/packing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'shared',
+          room,
+          groupActivities,
+          accommodation: myPrefs.accommodation,
+          existingNames: sharedNames,
+        }),
+      })
+      const data = await res.json()
+      const summary = data?.weatherSummary || null
+      if (summary) setWeatherSummary(summary)
+      const aiItems: AiItemResponse[] = Array.isArray(data?.items) ? data.items : []
+      const filtered = aiItems.filter(it => !sharedNames.includes(it.name.toLowerCase()))
+      if (filtered.length > 0) {
+        const toInsert = filtered.map(it => ({
+          room_id: room.id,
+          category: it.category,
+          name: it.name,
+          checked: false,
+          added_by: 'AI',
+          added_by_session: 'ai',
+          scope: 'shared',
+          owner_session: null,
+          ai_generated: true,
+          ai_reason: it.ai_reason,
+          qty: it.qty,
+          shared_gear: Boolean(it.shared_gear),
+        }))
+        const { data: inserted } = await supabase.from('packing_items').insert(toInsert).select()
+        if (inserted) mergeItems(inserted as PackingItem[])
+      }
+      // oznacz, że wspólna lista AI została wygenerowana (raz na pokój)
+      await supabase.from('packing_meta').upsert({
+        room_id: room.id,
+        shared_generated_at: new Date().toISOString(),
+        weather_summary: summary,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'room_id' })
+    } finally {
+      setGeneratingShared(false)
+    }
+  }
+
+  function mergeItems(newOnes: PackingItem[]) {
+    setItems(prev => {
+      const ids = new Set(prev.map(i => i.id))
+      const add = newOnes.filter(i => !ids.has(i.id))
+      return [...prev, ...add]
+    })
+  }
+
+  async function saveProfileAndGenerate() {
+    const payload = {
       room_id: room.id,
-      added_by: 'system',
-      added_by_session: 'system',
-    }))
-    const { data } = await supabase.from('packing_items').insert(toInsert).select()
-    setItems(data || [])
+      session_id: sessionId,
+      gender: formGender,
+      toggles: formToggles,
+      updated_at: new Date().toISOString(),
+    }
+    const { data } = await supabase
+      .from('packing_profiles')
+      .upsert(payload, { onConflict: 'room_id,session_id' })
+      .select()
+      .single()
+    const prof = (data || { ...payload, id: '', created_at: '' }) as PackingProfile
+    setProfile(prof)
+    setShowProfileForm(false)
+
+    // usuń poprzednie pozycje AI tej osoby (świadoma regeneracja), zostaw ręczne
+    const myAi = myPersonal.filter(i => i.ai_generated)
+    if (myAi.length > 0) {
+      const ids = myAi.map(i => i.id)
+      await supabase.from('packing_items').delete().in('id', ids)
+      setItems(prev => prev.filter(i => !ids.includes(i.id)))
+    }
+    const remaining = items.filter(i => !myAi.some(a => a.id === i.id))
+    await generatePersonal(prof, remaining)
   }
 
-  async function handleReseed() {
-    if (!confirm('Resetuje listę i generuję nową na podstawie aktualnych preferencji ekipy. Stracisz ręczne zmiany. Na pewno?')) return
-    setReseeding(true)
-    await supabase.from('packing_items').delete().eq('room_id', room.id)
-    await seedItems()
-    setReseeding(false)
+  async function regenerateShared() {
+    if (!confirm('Przegeneruję wspólne propozycje AI na nowo (Twoje ręczne wpisy zostają). Kontynuować?')) return
+    const aiShared = shared.filter(i => i.ai_generated)
+    if (aiShared.length > 0) {
+      const ids = aiShared.map(i => i.id)
+      await supabase.from('packing_items').delete().in('id', ids)
+      setItems(prev => prev.filter(i => !ids.includes(i.id)))
+    }
+    const remaining = items.filter(i => !aiShared.some(a => a.id === i.id))
+    await generateShared(remaining)
   }
 
   async function addItem() {
     if (!newItemText.trim()) return
     setAdding(true)
-    const { data } = await supabase.from('packing_items').insert({
+    const row = {
       room_id: room.id,
       category: newItemCategory,
       name: newItemText.trim(),
       checked: false,
-      added_by: getSessionName(),
+      added_by: myName,
       added_by_session: sessionId,
-    }).select().single()
-    if (data) setItems(prev => [...prev, data])
+      ai_generated: false,
+      scope: view === 'personal' ? 'personal' : 'shared',
+      owner_session: (view === 'personal' ? sessionId : null) as string | null,
+    }
+    const { data } = await supabase.from('packing_items').insert(row).select().single()
+    if (data) mergeItems([data as PackingItem])
     setNewItemText('')
+    setShowAddForm(false)
     setAdding(false)
   }
 
   async function toggleItem(item: PackingItem) {
     const { data } = await supabase
       .from('packing_items').update({ checked: !item.checked }).eq('id', item.id).select().single()
-    if (data) setItems(prev => prev.map(i => i.id === item.id ? data : i))
+    if (data) setItems(prev => prev.map(i => i.id === item.id ? data as PackingItem : i))
   }
 
   async function deleteItem(id: string) {
@@ -228,47 +343,133 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
     setItems(prev => prev.filter(i => i.id !== id))
   }
 
+  async function claimItem(item: PackingItem, take: boolean) {
+    const patch = take
+      ? { claimed_by: sessionId, claimed_by_name: myName }
+      : { claimed_by: null, claimed_by_name: null }
+    const { data } = await supabase.from('packing_items').update(patch).eq('id', item.id).select().single()
+    if (data) setItems(prev => prev.map(i => i.id === item.id ? data as PackingItem : i))
+  }
+
   function toggleCategory(cat: string) {
     setCollapsedCats(prev => {
       const next = new Set(prev)
-      next.has(cat) ? next.delete(cat) : next.add(cat)
+      if (next.has(cat)) next.delete(cat); else next.add(cat)
       return next
     })
   }
 
-  const checkedCount = items.filter(i => i.checked).length
+  const checkedCount = visible.filter(i => i.checked).length
+  const generating = view === 'personal' ? generatingPersonal : generatingShared
 
   if (loading) {
-    return <div className="flex items-center justify-center py-16 text-stone-600 text-sm animate-pulse">Generuję listę dla ekipy...</div>
+    return <div className="flex items-center justify-center py-16 text-stone-600 text-sm animate-pulse">Wczytuję listę pakowania...</div>
   }
 
   return (
     <div className="px-4 py-5 max-w-lg mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="font-display text-lg font-semibold text-stone-100">Lista pakowania</h2>
-        <span className="text-xs text-stone-500 bg-stone-800 px-2.5 py-1 rounded-full">{checkedCount} / {items.length}</span>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-display text-lg font-semibold text-stone-100">Pakowanie</h2>
+        <span className="text-xs text-stone-500 bg-stone-800 px-2.5 py-1 rounded-full">{checkedCount} / {visible.length}</span>
       </div>
 
-      {/* Aktywne filtry */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {groupActivities.slice(0, 5).map(a => (
-          <span key={a} className="text-xs bg-forest-800/40 text-forest-400 border border-forest-700/30 px-2 py-0.5 rounded-full">{a}</span>
-        ))}
-        <span className="text-xs bg-stone-800 text-stone-500 border border-stone-700/30 px-2 py-0.5 rounded-full">{accommodation}</span>
+      {/* Segmenty Moja / Wspólne */}
+      <div className="flex gap-1 p-1 bg-stone-900 border border-stone-800 rounded-2xl mb-4">
+        <button
+          onClick={() => { setView('personal'); setNewItemCategory('ubrania'); setShowAddForm(false) }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${view === 'personal' ? 'bg-forest-600 text-white' : 'text-stone-400 hover:text-stone-200'}`}
+        >
+          <User className="w-4 h-4" /> Moja lista
+        </button>
+        <button
+          onClick={() => { setView('shared'); setNewItemCategory('sprzet'); setShowAddForm(false) }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${view === 'shared' ? 'bg-water-600 text-white' : 'text-stone-400 hover:text-stone-200'}`}
+        >
+          🎒 Wspólne
+        </button>
       </div>
+
+      {/* Pasek pogody */}
+      {weatherSummary && (
+        <div className="flex items-start gap-2 bg-water-900/20 border border-water-800/30 rounded-xl px-3 py-2.5 mb-4">
+          <Cloud className="w-4 h-4 text-water-400 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-water-200/90 leading-relaxed">{weatherSummary}</p>
+        </div>
+      )}
+
+      {/* Formularz profilu (lista osobista, pierwsze wejście / zmiana) */}
+      {view === 'personal' && showProfileForm && (
+        <div className="bg-stone-900 border border-stone-700 rounded-2xl p-4 mb-4">
+          <p className="text-sm text-stone-300 font-medium mb-1">Dopasuję listę pod Ciebie 🎯</p>
+          <p className="text-xs text-stone-500 mb-3">Kilka pytań, żeby lista była trafna. Widoczna tylko dla Ciebie.</p>
+
+          <p className="text-xs text-stone-400 mb-1.5">Płeć</p>
+          <div className="grid grid-cols-2 gap-1.5 mb-3">
+            {GENDER_OPTIONS.map(g => (
+              <button
+                key={g.id}
+                onClick={() => setFormGender(g.id)}
+                className={`py-2 rounded-xl text-xs border transition-all ${formGender === g.id ? 'bg-forest-600 border-forest-600 text-white' : 'bg-stone-800 border-stone-700 text-stone-400'}`}
+              >{g.label}</button>
+            ))}
+          </div>
+
+          <p className="text-xs text-stone-400 mb-1.5">Dotyczy mnie</p>
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {TOGGLE_OPTIONS.map(t => {
+              const on = !!formToggles[t.id]
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setFormToggles(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                  className={`px-2.5 py-1.5 rounded-full text-xs border transition-all ${on ? 'bg-forest-800/40 border-forest-600 text-forest-300' : 'bg-stone-800 border-stone-700 text-stone-500'}`}
+                >{t.label}</button>
+              )
+            })}
+          </div>
+
+          <button
+            onClick={saveProfileAndGenerate}
+            disabled={generatingPersonal}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-forest-600 hover:bg-forest-500 disabled:bg-stone-700 text-white text-sm font-medium transition-colors"
+          >
+            {generatingPersonal ? <><Loader2 className="w-4 h-4 animate-spin" /> Generuję...</> : <><Sparkles className="w-4 h-4" /> Wygeneruj moją listę</>}
+          </button>
+        </div>
+      )}
+
+      {/* Stan generowania */}
+      {generating && !showProfileForm && (
+        <div className="flex items-center justify-center gap-2 py-8 text-stone-500 text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          {view === 'personal' ? 'AI szykuje Twoją listę...' : 'AI szykuje wspólny sprzęt...'}
+        </div>
+      )}
+
+      {/* Pusta lista osobista bez profilu */}
+      {view === 'personal' && !generating && !showProfileForm && myPersonal.length === 0 && (
+        <button
+          onClick={() => setShowProfileForm(true)}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-forest-600/90 hover:bg-forest-500 text-white text-sm font-medium transition-colors mb-4"
+        >
+          <Sparkles className="w-4 h-4" /> Wygeneruj moją listę
+        </button>
+      )}
 
       {/* Progress */}
-      <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-5">
-        <div
-          className="h-full bg-gradient-to-r from-forest-500 to-water-500 rounded-full transition-all duration-500"
-          style={{ width: items.length ? `${(checkedCount / items.length) * 100}%` : '0%' }}
-        />
-      </div>
+      {visible.length > 0 && (
+        <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-5">
+          <div
+            className="h-full bg-gradient-to-r from-forest-500 to-water-500 rounded-full transition-all duration-500"
+            style={{ width: `${(checkedCount / visible.length) * 100}%` }}
+          />
+        </div>
+      )}
 
-      {/* Categories */}
+      {/* Kategorie */}
       {CATEGORIES.map(cat => {
-        const catItems = items.filter(i => i.category === cat.id)
+        const catItems = visible.filter(i => i.category === cat.id)
         if (catItems.length === 0) return null
         const collapsed = collapsedCats.has(cat.id)
         const catChecked = catItems.filter(i => i.checked).length
@@ -286,18 +487,58 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             {!collapsed && (
               <div className="space-y-1 ml-1">
                 {catItems.map(item => (
-                  <div key={item.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all group ${item.checked ? 'bg-stone-800/20 border-stone-800 opacity-50' : 'bg-stone-800/50 border-stone-700/50'}`}>
-                    <button
-                      onClick={() => toggleItem(item)}
-                      className={`w-5 h-5 rounded-md border flex-shrink-0 flex items-center justify-center transition-all ${item.checked ? 'bg-forest-600 border-forest-600' : 'border-stone-600 hover:border-forest-500'}`}
-                    >
-                      {item.checked && <Check className="w-3 h-3 text-white" />}
-                    </button>
-                    <span className={`flex-1 text-sm ${item.checked ? 'line-through text-stone-600' : 'text-stone-300'}`}>{item.name}</span>
-                    {item.added_by !== 'system' && <span className="text-stone-700 text-xs">{item.added_by}</span>}
-                    <button onClick={() => deleteItem(item.id)} className="text-stone-700 hover:text-red-400 transition-colors p-0.5 opacity-0 group-hover:opacity-100">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                  <div key={item.id} className={`px-3 py-2.5 rounded-xl border transition-all group ${item.checked ? 'bg-stone-800/20 border-stone-800 opacity-50' : 'bg-stone-800/50 border-stone-700/50'}`}>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => toggleItem(item)}
+                        className={`w-5 h-5 rounded-md border flex-shrink-0 flex items-center justify-center transition-all ${item.checked ? 'bg-forest-600 border-forest-600' : 'border-stone-600 hover:border-forest-500'}`}
+                      >
+                        {item.checked && <Check className="w-3 h-3 text-white" />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-sm ${item.checked ? 'line-through text-stone-600' : 'text-stone-200'}`}>{item.name}</span>
+                          {item.qty && <span className="text-[10px] font-medium text-amber-300/90 bg-amber-900/20 border border-amber-800/30 px-1.5 py-0.5 rounded-full">{item.qty}</span>}
+                          {item.ai_generated && <Sparkles className="w-3 h-3 text-forest-500/70" />}
+                        </div>
+                        {item.ai_reason && !item.checked && (
+                          <p className="text-[11px] text-stone-500 mt-0.5 leading-snug">{item.ai_reason}</p>
+                        )}
+                      </div>
+                      {!item.shared_gear && item.added_by !== 'system' && item.added_by !== 'AI' && (
+                        <span className="text-stone-700 text-xs flex-shrink-0">{item.added_by}</span>
+                      )}
+                      <button onClick={() => deleteItem(item.id)} className="text-stone-700 hover:text-red-400 transition-colors p-0.5 opacity-0 group-hover:opacity-100 flex-shrink-0">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Kto to bierze? — tylko wspólny sprzęt */}
+                    {item.shared_gear && (
+                      <div className="mt-2 ml-8">
+                        {item.claimed_by ? (
+                          item.claimed_by === sessionId ? (
+                            <button
+                              onClick={() => claimItem(item, false)}
+                              className="inline-flex items-center gap-1.5 text-xs bg-forest-800/40 text-forest-300 border border-forest-700/40 px-2.5 py-1 rounded-full"
+                            >
+                              <Check className="w-3 h-3" /> Bierzesz Ty · cofnij
+                            </button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs bg-stone-800 text-stone-400 border border-stone-700/40 px-2.5 py-1 rounded-full">
+                              <Hand className="w-3 h-3" /> Bierze: {item.claimed_by_name || 'ktoś'}
+                            </span>
+                          )
+                        ) : (
+                          <button
+                            onClick={() => claimItem(item, true)}
+                            className="inline-flex items-center gap-1.5 text-xs bg-water-800/30 text-water-300 border border-water-700/40 hover:bg-water-700/40 px-2.5 py-1 rounded-full transition-colors"
+                          >
+                            <Hand className="w-3 h-3" /> Ja to biorę
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -306,10 +547,10 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         )
       })}
 
-      {/* Add item */}
-      {!showAddForm ? (
+      {/* Dodaj element */}
+      {!showProfileForm && (!showAddForm ? (
         <button onClick={() => setShowAddForm(true)} className="w-full flex items-center gap-2 bg-stone-800/40 border border-dashed border-stone-700 hover:border-stone-600 rounded-xl px-4 py-3 text-stone-600 hover:text-stone-400 transition-all text-sm mt-2">
-          <Plus className="w-4 h-4" /> Dodaj element
+          <Plus className="w-4 h-4" /> {view === 'personal' ? 'Dodaj do mojej listy' : 'Dodaj do wspólnych'}
         </button>
       ) : (
         <div className="bg-stone-900 border border-stone-700 rounded-2xl p-4 space-y-3 mt-2">
@@ -332,17 +573,30 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             </button>
           </div>
         </div>
-      )}
+      ))}
 
-      {/* Regenerate button */}
-      <button
-        onClick={handleReseed}
-        disabled={reseeding}
-        className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-600 hover:text-stone-400 text-xs transition-all"
-      >
-        <RefreshCw className={`w-3.5 h-3.5 ${reseeding ? 'animate-spin' : ''}`} />
-        {reseeding ? 'Generuję...' : 'Regeneruj listę wg preferencji ekipy'}
-      </button>
+      {/* Regeneruj */}
+      {!showProfileForm && (
+        view === 'personal' ? (
+          <button
+            onClick={() => setShowProfileForm(true)}
+            disabled={generatingPersonal}
+            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-600 hover:text-stone-400 text-xs transition-all"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${generatingPersonal ? 'animate-spin' : ''}`} />
+            Zmień profil i przegeneruj moją listę
+          </button>
+        ) : (
+          <button
+            onClick={regenerateShared}
+            disabled={generatingShared}
+            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-600 hover:text-stone-400 text-xs transition-all"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${generatingShared ? 'animate-spin' : ''}`} />
+            Przegeneruj wspólne propozycje AI
+          </button>
+        )
+      )}
     </div>
   )
 }

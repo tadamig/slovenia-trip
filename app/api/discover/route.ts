@@ -425,6 +425,7 @@ async function readCuratedPlaces(country: string, activities: string[]): Promise
       .from('curated_places')
       .select('google_place_id, name, lat, lon, google_rating, google_total_ratings, subregion, country, types, activities, sources, mention_count')
       .ilike('country', country)
+      .eq('active', true)
     if (activities.length) query = query.overlaps('activities', activities)
     const { data } = await query.limit(300)
     return (data as CuratedRow[]) || []
@@ -459,6 +460,19 @@ export async function POST(request: NextRequest) {
     }
 
     const effActivities = activities.length ? activities : ['sightseeing', 'food']
+
+    // Auto-uczenie (Element 1): zaloguj realne zapytanie (fire-and-forget).
+    // Termometr popularności dla crona auto-ingest. Nie blokuje krytycznej ścieżki
+    // przy błędzie; logujemy też trafienia w cache, by liczyć faktyczny popyt.
+    if (country && supabase) {
+      try {
+        await supabase.rpc('log_discover_query', {
+          p_country: country.trim(),
+          p_city: (baseCity || '').trim(),
+          p_activities: [...effActivities].sort(),
+        })
+      } catch { /* log nie może psuć discover */ }
+    }
 
     // Cache: jeśli świeży wynik dla (kraj, miasto, promień, aktywności) — zwróć,
     // re-sortując wg bieżącego wyboru (sort nie wchodzi do klucza).

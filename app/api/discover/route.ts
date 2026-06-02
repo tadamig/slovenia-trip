@@ -67,7 +67,7 @@ const ACTIVITY_DEST_QUERIES: Record<string, string[]> = {
   sightseeing: ['castle', 'old town landmark', 'must see attraction'],
   relax: ['thermal spa', 'wellness retreat'],
   photo: ['scenic photo spot', 'most photogenic viewpoint'],
-  markets: ['farmers market', 'local market'],
+  markets: ['tržnica', 'farmers market', 'market hall', 'local market'],
   nightlife: ['popular bar', 'nightlife club'],
   cycling: ['scenic cycling route', 'bike path nature'],
   van: ['campsite for campervan', 'panoramic camper stop'],
@@ -88,6 +88,27 @@ const EXCLUDE_TYPES = new Set([
 
 // Nazwy zdradzające usługę (wypożyczalnia / sklep / wynajem)
 const RENTAL_NAME_RE = /\b(rent|rents|rental|rentals|hire|wypożyczaln|outfitter|equipment|sklep|store|shop)\b/i
+
+// ——————————————————————————————————————————————
+// Sklepy / markety — NIE śmieci do wyrzucenia, tylko osobna kategoria.
+// Nie pokazujemy ich userowi w głównych wynikach, ale odkładamy do
+// wewnętrznego kubełka `shops` w odpowiedzi API — pod przyszłe funkcje
+// (planer dnia, dodawanie sklepów do trasy).
+// ——————————————————————————————————————————————
+const SHOP_TYPES = new Set([
+  'supermarket', 'grocery_or_supermarket', 'convenience_store',
+  'shopping_mall', 'department_store',
+])
+
+// Sieci handlowe (po nazwie) — łapiemy nawet gdy Google nie da typu sklepowego.
+const SHOP_CHAIN_RE = /\b(lidl|spar|interspar|hofer|mercator|tuš|tus|leclerc|aldi|kaufland|maximarket|petrol|omv|hipermarket|hypermarket)\b/i
+
+// Czy to sklep/market (kandydat do kubełka `shops`, nie do głównych wyników).
+function isShopPlace(types: string[], name: string): boolean {
+  if (types.some((t) => SHOP_TYPES.has(t))) return true
+  if (SHOP_CHAIN_RE.test(name)) return true
+  return false
+}
 
 // Aktywności, dla których wypożyczalnie są typowym szumem
 const GEAR_ACTIVITIES = new Set(['sup', 'trekking', 'cycling', 'van', 'tent'])
@@ -371,7 +392,7 @@ function buildCacheKey(p: { baseCity: string; country: string; radius: number; a
   return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}`
 }
 
-async function readCache(key: string): Promise<{ places: DiscoverPlace[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
+async function readCache(key: string): Promise<{ places: DiscoverPlace[]; shops?: unknown[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
   if (!supabase) return null
   try {
     const { data } = await supabase
@@ -481,6 +502,7 @@ export async function POST(request: NextRequest) {
     if (cached && Array.isArray(cached.places)) {
       return NextResponse.json({
         places: sortPlaces(cached.places, sort),
+        shops: Array.isArray(cached.shops) ? cached.shops : [],
         baseLat: cached.baseLat ?? lat,
         baseLon: cached.baseLon ?? lon,
         meta: { ...(cached.meta || {}), sort, cached: true },
@@ -520,6 +542,13 @@ export async function POST(request: NextRequest) {
 
     // Dedup po place_id; zbieraj intencję aktywności + flagę curated
     const byId = new Map<string, DiscoverPlace>()
+    // Wewnętrzny kubełek sklepów/marketów — nie pokazywany userowi teraz,
+    // ale zwracany w odpowiedzi pod przyszłe funkcje (planer dnia / trasy).
+    const shopsById = new Map<string, {
+      name: string; googlePlaceId: string; lat: number; lon: number
+      googleRating?: number; googleTotalRatings?: number; address?: string
+      subregion?: string; country?: string; types: string[]; distanceFromBase: number
+    }>()
     // Wtórny dedup po znormalizowanej nazwie — np. rzeka/feature, którą Google
     // zwraca z RÓŻNYMI place_id z różnych zapytań (Ljubljanica), inaczej klonuje się.
     const byName = new Map<string, string>()
@@ -580,6 +609,29 @@ export async function POST(request: NextRequest) {
 
         const types: string[] = r.types || []
         const name: string = r.name || ''
+
+        // Sklep/market → kubełek `shops` (nie do głównych wyników), dane czekają
+        // pod przyszłe funkcje. Łapiemy TU, przed isExcludedPlace, więc problem
+        // "ratunku przez typ food" (markety niosą `food`) znika u źródła.
+        if (isShopPlace(types, name)) {
+          if (!shopsById.has(r.place_id)) {
+            shopsById.set(r.place_id, {
+              name,
+              googlePlaceId: r.place_id,
+              lat: placeLat,
+              lon: placeLon,
+              googleRating: r.rating,
+              googleTotalRatings: r.user_ratings_total,
+              address: r.formatted_address,
+              subregion: localityFromAddress(r.formatted_address || '', country),
+              country: country || undefined,
+              types,
+              distanceFromBase: distance,
+            })
+          }
+          continue
+        }
+
         if (isExcludedPlace(types, name, query.activity)) continue
 
         const existing = byId.get(r.place_id)
@@ -682,18 +734,25 @@ export async function POST(request: NextRequest) {
       }
     })
 
+    // Kubełek sklepów: najbliższe najpierw, przycięty (payload + przyszłe użycie).
+    const shops = Array.from(shopsById.values())
+      .sort((a, b) => a.distanceFromBase - b.distanceFromBase)
+      .slice(0, 40)
+
     const meta = {
       curatedCount: curated.length,
       curatedSeeded,
       queriesRun: queries.length,
       rawCandidates: byId.size,
       verified: quality.length,
+      shopsFound: shops.length,
       radius,
     }
 
     // Zapisz do cache pulę posortowaną domyślnie wg score (klucz pomija sort)
     await writeCache(cacheKey, {
       places: sortPlaces(quality, 'match'),
+      shops,
       baseLat: lat,
       baseLon: lon,
       meta,
@@ -704,6 +763,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       places: sorted,
+      shops,
       baseLat: lat,
       baseLon: lon,
       meta: { ...meta, sort, cached: false },

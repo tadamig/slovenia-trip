@@ -8,6 +8,10 @@ import {
   Sparkles, Hand, Loader2, Cloud, User, X,
 } from 'lucide-react'
 
+// Opisy AI ("dlaczego ta rzecz") są zapisywane w DB do celów debugu, ale dla
+// użytkownika są zbędne. Przełącz na true, by zobaczyć je na kartach (debug).
+const DEBUG_AI_REASONS = false
+
 const CATEGORIES = [
   { id: 'sprzet', label: '🏄 Sprzęt' },
   { id: 'nocleg', label: '🏕️ Nocleg' },
@@ -525,7 +529,7 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
                           {item.qty && <span className="text-[10px] font-medium text-amber-300/90 bg-amber-900/20 border border-amber-800/30 px-1.5 py-0.5 rounded-full">{item.qty}</span>}
                           {item.ai_generated && <Sparkles className="w-3 h-3 text-forest-500/70" />}
                         </div>
-                        {item.ai_reason && !item.checked && (
+                        {DEBUG_AI_REASONS && item.ai_reason && !item.checked && (
                           <p className="text-[11px] text-stone-500 mt-0.5 leading-snug">{item.ai_reason}</p>
                         )}
                       </div>

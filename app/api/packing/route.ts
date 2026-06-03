@@ -299,10 +299,23 @@ function buildSharedPrompt(opts: {
   const isHouse = opts.accommodation === 'airbnb' || opts.accommodation === 'hotel'
 
   const accommodationRule = isHouse
-    ? `3. NOCLEG TO WYNAJĘTY DOM / HOTEL — obiekt zapewnia wyposażenie. KATEGORYCZNIE NIE dodawaj: namiotu, śpiworów, karimat, kuchenki turystycznej, gazu, garnków, sztućców, naczyń, pojemników na jedzenie, lokalnych przypraw, ręczników, pościeli, latarki kempingowej. Tych rzeczy NIE bierzemy — są na miejscu. Skup się na sprzęcie do aktywności i drobiazgach wspólnych (apteczka, głośnik, listwa/ładowarki, nawigacja, worki na śmieci, środek na komary, ew. zapas wody na drogę).`
-    : `3. NOCLEG TO NAMIOT / VAN (biwak) — dodaj sprzęt biwakowy wspólny: namiot, kuchenka + gaz, garnki/sztućce wspólne, latarka/lampa kempingowa, zapas wody. To ma sens tylko przy biwaku.`
+    ? `3. NOCLEG TO W PEŁNI WYPOSAŻONY WYNAJĘTY DOM / APARTAMENT / HOTEL. Zakładaj, że obiekt ma standardowe wyposażenie domowe i NIE proponuj NICZEGO z tej listy (mamy to na miejscu):
+   - kuchnia: kuchenka, garnki, patelnie, sztućce, naczynia, talerze, kubki, deska, nóż kuchenny, czajnik, ekspres, pojemniki, gąbki, płyn do naczyń, lokalne przyprawy, sól, olej,
+   - dom: ręczniki, pościel, koce, papier toaletowy, środki czystości, worki na śmieci, suszarka do włosów, mop/szczotka,
+   - prąd/elektronika domowa: listwa zasilająca, przedłużacz, podstawowe ładowarki domowe, lampki/latarki, router/WiFi,
+   - orientacja: nawigacja GPS jako urządzenie (każdy ma w telefonie).
+   To wszystko jest w domu — pominięcie tych rzeczy jest OBOWIĄZKOWE.
+4. Skup się na tym, co NAPRAWDĘ ma sens zabrać GRUPOWO przy pobycie w domu + aktywnościach:
+   - sprzęt do wspólnych aktywności (np. zestaw/pompka do SUP, sprzęt do gier plażowych, statyw do foto, lornetka),
+   - rzeczy na wspólne wycieczki/dni poza domem (torba termiczna/lodówka turystyczna na prowiant, koc piknikowy, bukłak/duża butla na wodę na trasę, plecak na wycieczki),
+   - rozrywka na wieczory (głośnik bluetooth, gry planszowe / karty),
+   - sprawy auta przy wyjeździe za granicę (jeśli transport=auto i kraj inny niż Polska: winieta / opłaty drogowe danego kraju, dokumenty i ubezpieczenie auta, uchwyt/ładowarka samochodowa) — sam oceń wg kraju i transportu,
+   - wspólny prowiant i przekąski na drogę / pierwszy wieczór,
+   - apteczka grupowa, środek na komary/kleszcze jeśli pasuje do pogody i aktywności.`
+    : `3. NOCLEG TO NAMIOT / VAN (biwak) — dodaj sprzęt biwakowy wspólny: namiot, kuchenka + gaz, garnki/sztućce wspólne, latarka/lampa kempingowa, zapas wody, składany stół/krzesła. To ma sens tylko przy biwaku.
+4. Dodatkowo: sprzęt do wspólnych aktywności, rozrywka (głośnik, gry), apteczka grupowa, prowiant wspólny, sprawy auta przy wyjeździe za granicę (winieta, dokumenty) jeśli pasuje.`
 
-  return `Zaplanuj WSPÓLNĄ listę pakowania dla całej ekipy na wyjazd grupowy.
+  return `Jesteś doświadczonym organizatorem wypraw. Przemyśl GŁĘBOKO i kompletnie, co ekipa powinna zabrać WSPÓLNIE na ten konkretny wyjazd. Zaplanuj WSPÓLNĄ listę pakowania.
 
 KONTEKST:
 - Pogoda: ${opts.weather.summary}
@@ -313,20 +326,20 @@ KONTEKST:
 - Aktywności ekipy: ${acts.length ? acts.join(', ') : 'ogólne'}
 
 ZASADY:
-1. To lista WSPÓLNA — TYLKO sprzęt i rzeczy współdzielone przez ekipę, które wystarczy spakować RAZ dla wszystkich.
-2. KATEGORYCZNY ZAKAZ rzeczy osobistych — NIE dodawaj NIGDY: ubrań (stroju kąpielowego, bluzy, kurtki, butów, czapki), kosmetyków, dokumentów, powerbanku, kremu z filtrem, okularów, leków. To wszystko każdy pakuje sobie sam na swojej osobistej liście.
+1. To lista WSPÓLNA — TYLKO sprzęt i rzeczy współdzielone przez ekipę, które wystarczy spakować RAZ dla wszystkich. Pomyśl praktycznie o całym przebiegu wyjazdu (dojazd → dom → wspólne wycieczki → wieczory) i co się przyda grupie.
+2. KATEGORYCZNY ZAKAZ rzeczy osobistych — NIE dodawaj NIGDY: ubrań (stroju kąpielowego, bluzy, kurtki, butów, czapki), kosmetyków, dokumentów osobistych, powerbanku, kremu z filtrem, okularów, leków. To wszystko każdy pakuje sobie sam na swojej osobistej liście.
 ${accommodationRule}
-4. Pole "shared_gear": true dla rzeczy, które ma przynieść TYLKO JEDNA osoba dla całej grupy (np. apteczka, głośnik, listwa, nawigacja). false dla rzeczy zużywalnych/wieloszt. (np. butelki wody, worki na śmieci).
-5. Skaluj ilości do liczby osób/dni w polu "qty" gdzie ma to sens.
-6. Każda pozycja ma krótkie "ai_reason" (max ~8 słów).
-7. Kategorie WYŁĄCZNIE z: ${ALLOWED_CATEGORIES.join(', ')}.
-8. NIE powtarzaj: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-9. Maksymalnie ~14 pozycji. Tylko realnie wspólne rzeczy — lepiej krótsza, trafna lista.
+5. Pole "shared_gear": true dla rzeczy, którą ma przynieść TYLKO JEDNA osoba dla całej grupy (np. apteczka, głośnik, statyw, torba termiczna, gry). false dla rzeczy zużywalnych/wieloszt. (np. woda, prowiant).
+6. Skaluj ilości do liczby osób/dni w polu "qty" gdzie ma to sens.
+7. Pole "ai_reason" (to pole służy DEBUGOWANIU, nie jest pokazywane userowi): napisz konkretnie DLACZEGO ta rzecz trafia na listę WSPÓLNĄ i czemu akurat ona ma sens przy tym noclegu/aktywnościach (1 zdanie). Bądź rzeczowy.
+8. Kategorie WYŁĄCZNIE z: ${ALLOWED_CATEGORIES.join(', ')}.
+9. NIE powtarzaj: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
+10. Zwróć BOGATĄ, kompletną listę: ${Math.max(14, Math.min(22, (opts.numPeople || 4) * 3 + 8))} – 22 trafnych pozycji. Lepiej pełna i przemyślana niż uboga, ale każda pozycja musi mieć realny sens (zero zapychaczy, zero rzeczy które ma dom).
 
 Zwróć obiekt JSON:
 {
   "items": [
-    { "category": "sprzet", "name": "Apteczka grupowa", "qty": "1", "ai_reason": "jedna na ekipę", "shared_gear": true }
+    { "category": "sprzet", "name": "Apteczka grupowa", "qty": "1", "ai_reason": "Jedna porządna apteczka na ekipę wystarczy; przy trekkingu kluczowa.", "shared_gear": true }
   ]
 }`
 }
@@ -388,7 +401,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const res = await callDeepSeek(prompt, 2200)
+    // Wspólna lista jest teraz bogatsza (do ~22 pozycji z dłuższym uzasadnieniem) — więcej tokenów.
+    const res = await callDeepSeek(prompt, mode === 'shared' ? 3200 : 2200)
     if (!res.ok) {
       const text = await res.text()
       return NextResponse.json({ error: `AI error ${res.status}: ${text}`, weatherSummary: weather.summary }, { status: 502 })

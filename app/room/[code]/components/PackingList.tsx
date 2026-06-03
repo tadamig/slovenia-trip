@@ -395,6 +395,13 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
     setShowAddForm(true)
   }
 
+  // Najpierw płynnie przewiń kontener na samą górę, a DOPIERO POTEM otwórz
+  // okienko z pytaniami (drobne opóźnienie, by scroll zdążył się odegrać).
+  function openProfileForm() {
+    onScrollTop?.()
+    setTimeout(() => setShowProfileForm(true), 420)
+  }
+
   async function addItem() {
     if (!newItemText.trim()) return
     // Kategoria: jeśli wybrano "nowa kategoria", użyj wpisanej nazwy (po przycięciu).
@@ -505,51 +512,6 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
         </div>
       )}
 
-      {/* Formularz profilu (lista osobista, pierwsze wejście / zmiana) */}
-      {view === 'personal' && showProfileForm && (
-        <div className="bg-stone-900 border border-stone-700 rounded-2xl p-4 mb-4">
-          <p className="text-sm text-stone-300 font-medium mb-1">Dopasuję listę pod Ciebie 🎯</p>
-          <p className="text-xs text-stone-500 mb-3">Kilka pytań, żeby lista była trafna. Widoczna tylko dla Ciebie.</p>
-
-          <p className="text-xs text-stone-400 mb-1.5">Płeć</p>
-          <div className="grid grid-cols-2 gap-1.5 mb-3">
-            {GENDER_OPTIONS.map(g => (
-              <button
-                key={g.id}
-                onClick={() => setFormGender(g.id)}
-                className={`py-2 rounded-xl text-xs border transition-all ${formGender === g.id ? 'bg-forest-600 border-forest-600 text-white' : 'bg-stone-800 border-stone-700 text-stone-400'}`}
-              >{g.label}</button>
-            ))}
-          </div>
-
-          {PROFILE_GROUPS.map(group => (
-            <div key={group.title}>
-              <p className="text-xs text-stone-400 mb-1.5">{group.title}</p>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {group.options.map(t => {
-                  const on = !!formToggles[t.id]
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => setFormToggles(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
-                      className={`px-2.5 py-1.5 rounded-full text-xs border transition-all ${on ? 'bg-forest-800/40 border-forest-600 text-forest-300' : 'bg-stone-800 border-stone-700 text-stone-500'}`}
-                    >{t.label}</button>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
-
-          <button
-            onClick={saveProfileAndGenerate}
-            disabled={generatingPersonal}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-forest-600 hover:bg-forest-500 disabled:bg-stone-700 text-white text-sm font-medium transition-colors"
-          >
-            {generatingPersonal ? <><Loader2 className="w-4 h-4 animate-spin" /> Generuję...</> : <><Sparkles className="w-4 h-4" /> Wygeneruj moją listę</>}
-          </button>
-        </div>
-      )}
-
       {/* Stan generowania — animacja pakowania do plecaka (gra też outro) */}
       {packAnimActive && !showProfileForm && (
         <PackingAnimation
@@ -562,7 +524,7 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
       {/* Pusta lista osobista bez profilu */}
       {view === 'personal' && !generating && !packAnimActive && !showProfileForm && myPersonal.length === 0 && (
         <button
-          onClick={() => setShowProfileForm(true)}
+          onClick={openProfileForm}
           className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-forest-600/90 hover:bg-forest-500 text-white text-sm font-medium transition-colors mb-4"
         >
           <Sparkles className="w-4 h-4" /> Wygeneruj moją listę
@@ -667,7 +629,7 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
       {!showProfileForm && (
         view === 'personal' ? (
           <button
-            onClick={() => { onScrollTop?.(); setShowProfileForm(true) }}
+            onClick={openProfileForm}
             disabled={generatingPersonal}
             className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300/80 hover:text-red-200 hover:border-red-800/60 shadow-[0_0_10px_rgba(220,38,38,0.15)] text-xs transition-all"
           >
@@ -686,6 +648,74 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
         )
       )}
       </div>
+      )}
+
+      {/* Okienko profilu — overlay na środku, przyciemnione tło */}
+      {view === 'personal' && showProfileForm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-12 pb-8 sm:items-center sm:pt-0 overflow-y-auto"
+          onClick={() => !generatingPersonal && setShowProfileForm(false)}
+        >
+          {/* przyciemnione tło */}
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+          {/* karta */}
+          <div
+            onClick={e => e.stopPropagation()}
+            className="relative w-full max-w-sm bg-stone-900 border border-stone-700 rounded-2xl p-5 shadow-2xl animate-in"
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-sm text-stone-100 font-semibold">Dopasuję listę pod Ciebie 🎯</p>
+                <p className="text-xs text-stone-500 mt-0.5">Kilka pytań, żeby lista była trafna. Widoczna tylko dla Ciebie.</p>
+              </div>
+              <button
+                onClick={() => !generatingPersonal && setShowProfileForm(false)}
+                className="text-stone-500 hover:text-stone-300 transition-colors p-1 -mr-1 -mt-0.5 flex-shrink-0"
+                aria-label="Zamknij"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-400 mb-1.5">Płeć</p>
+            <div className="grid grid-cols-2 gap-1.5 mb-3">
+              {GENDER_OPTIONS.map(g => (
+                <button
+                  key={g.id}
+                  onClick={() => setFormGender(g.id)}
+                  className={`py-2 rounded-xl text-xs border transition-all ${formGender === g.id ? 'bg-forest-600 border-forest-600 text-white' : 'bg-stone-800 border-stone-700 text-stone-400'}`}
+                >{g.label}</button>
+              ))}
+            </div>
+
+            {PROFILE_GROUPS.map(group => (
+              <div key={group.title}>
+                <p className="text-xs text-stone-400 mb-1.5">{group.title}</p>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {group.options.map(t => {
+                    const on = !!formToggles[t.id]
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setFormToggles(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                        className={`px-2.5 py-1.5 rounded-full text-xs border transition-all ${on ? 'bg-forest-800/40 border-forest-600 text-forest-300' : 'bg-stone-800 border-stone-700 text-stone-500'}`}
+                      >{t.label}</button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+
+            <button
+              onClick={saveProfileAndGenerate}
+              disabled={generatingPersonal}
+              className="w-full flex items-center justify-center gap-2 py-2.5 mt-1 rounded-xl bg-forest-600 hover:bg-forest-500 disabled:bg-stone-700 text-white text-sm font-medium transition-colors"
+            >
+              {generatingPersonal ? <><Loader2 className="w-4 h-4 animate-spin" /> Generuję...</> : <><Sparkles className="w-4 h-4" /> Wygeneruj moją listę</>}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Okienko dodawania — overlay na środku, przyciemnione tło */}

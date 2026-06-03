@@ -277,10 +277,11 @@ ZASADY:
    - "własne leki": własne leki na receptę.
    Krem z filtrem SPF dodaj TU (kategoria "kosmetyki"), jeśli pogoda słoneczna/ciepła.
 4. ELEKTRONIKA — ZAWSZE dodaj osobiste podstawy (kategoria "elektronika"): ładowarka do telefonu, kabel USB do telefonu, powerbank, słuchawki. Jeśli info o osobie zawiera "sprzęt elektroniczny (laptop, tablet)": dorzuć laptop/tablet + jego ładowarkę. Przy wyjeździe za granicę rozważ adapter/przejściówkę do gniazdka, jeśli pasuje.
-5. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
-6. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}. Dobieraj trafnie: ubrania→"ubrania", higiena/pielęgnacja/SPF/makijaż→"kosmetyki", ładowarki/kable/powerbank/słuchawki/laptop→"elektronika", paszport/dowód/bilety→"dokumenty", indywidualny sprzęt do aktywności→"sprzet". "inne" tylko ostateczność.
-7. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-8. Maksymalnie ~28 pozycji. Konkretnie, bez lania wody — ale higiena i elektronika MUSZĄ być rozpisane wg reguł 3 i 4.
+5. DOKUMENTY — ZAWSZE dodaj kluczowe dokumenty (kategoria "dokumenty"): dowód osobisty lub paszport, KARTA EKUZ (wyjazd po UE — refundacja leczenia za granicą), bilety/rezerwacje/potwierdzenia noclegu. Jeśli transport=auto LUB osoba prowadzi: dodatkowo prawo jazdy oraz dokumenty i ubezpieczenie auta. Te pozycje są OBOWIĄZKOWE — nie pomijaj ich nawet przy długiej liście.
+6. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
+7. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}. Dobieraj trafnie: ubrania→"ubrania", higiena/pielęgnacja/SPF/makijaż→"kosmetyki", ładowarki/kable/powerbank/słuchawki/laptop→"elektronika", paszport/dowód/EKUZ/bilety→"dokumenty", indywidualny sprzęt do aktywności→"sprzet". "inne" tylko ostateczność.
+8. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
+9. DŁUGOŚĆ: podaj tyle pozycji, ile NAPRAWDĘ trzeba na ten konkretny wyjazd — kompletnie, ale bez zapychaczy i bez dzielenia rzeczy w nieskończoność (nie rozbijaj na absurdy typu osobno lewy/prawy but). Nie ma sztywnego limitu — liczy się trafność. Must-have z reguł 3, 4 i 5 (higiena, elektronika, dokumenty) MUSZĄ się znaleźć niezależnie od długości listy.
 
 Zwróć obiekt JSON:
 {
@@ -410,7 +411,7 @@ export async function POST(request: NextRequest) {
 
   try {
     // Wspólna lista jest teraz bogatsza (do ~22 pozycji z dłuższym uzasadnieniem) — więcej tokenów.
-    const res = await callDeepSeek(prompt, mode === 'shared' ? 3200 : 2800)
+    const res = await callDeepSeek(prompt, mode === 'shared' ? 3200 : 3500)
     if (!res.ok) {
       const text = await res.text()
       return NextResponse.json({ error: `AI error ${res.status}: ${text}`, weatherSummary: weather.summary }, { status: 502 })

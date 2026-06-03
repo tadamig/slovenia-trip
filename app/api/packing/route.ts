@@ -270,10 +270,11 @@ ZASADY:
 1. To lista OSOBISTA — tylko rzeczy, które każdy pakuje sobie sam (ubrania, kosmetyki, dokumenty, własna elektronika, indywidualny sprzęt do aktywności). NIE dodawaj wspólnego sprzętu grupowego (namiot, apteczka grupowa, kuchenka, głośnik) — to osobna wspólna lista.
 2. Dobierz ubrania do pogody i liczby dni. Podawaj sensowne ILOŚCI w polu "qty" (np. "${opts.days} koszulek", "${Math.ceil(opts.days * 1.4)} par skarpet", "1 kurtka") tam gdzie to ma sens; gdzie nie ma — pomiń qty.
 3. Uwzględnij płeć i dodatkowe info taktownie (np. kosmetyczka, leki własne, soczewki) — bez przesady i bez krępujących założeń.
-4. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
-5. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}.
-6. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-7. Maksymalnie ~22 pozycji. Konkretnie, bez lania wody.
+4. ZAWSZE dodaj osobiste must-have, które każdy bierze dla siebie: powerbank + kabel do ładowania oraz krem z filtrem SPF (jeśli pogoda słoneczna/ciepła). To są rzeczy OSOBISTE, nie wspólne.
+5. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
+6. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}.
+7. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
+8. Maksymalnie ~22 pozycji. Konkretnie, bez lania wody.
 
 Zwróć obiekt JSON:
 {
@@ -294,6 +295,13 @@ function buildSharedPrompt(opts: {
 }): string {
   const acts = opts.groupActivities.map((a) => ACTIVITY_LABELS[a] || a)
   const acc = ACCOMMODATION_LABELS[opts.accommodation] || opts.accommodation || 'nieokreślony'
+  // Dom/hotel: ekipa nie biwakuje — wszystko kuchenne/spaniowe/ręczniki zapewnia obiekt.
+  const isHouse = opts.accommodation === 'airbnb' || opts.accommodation === 'hotel'
+
+  const accommodationRule = isHouse
+    ? `3. NOCLEG TO WYNAJĘTY DOM / HOTEL — obiekt zapewnia wyposażenie. KATEGORYCZNIE NIE dodawaj: namiotu, śpiworów, karimat, kuchenki turystycznej, gazu, garnków, sztućców, naczyń, pojemników na jedzenie, lokalnych przypraw, ręczników, pościeli, latarki kempingowej. Tych rzeczy NIE bierzemy — są na miejscu. Skup się na sprzęcie do aktywności i drobiazgach wspólnych (apteczka, głośnik, listwa/ładowarki, nawigacja, worki na śmieci, środek na komary, ew. zapas wody na drogę).`
+    : `3. NOCLEG TO NAMIOT / VAN (biwak) — dodaj sprzęt biwakowy wspólny: namiot, kuchenka + gaz, garnki/sztućce wspólne, latarka/lampa kempingowa, zapas wody. To ma sens tylko przy biwaku.`
+
   return `Zaplanuj WSPÓLNĄ listę pakowania dla całej ekipy na wyjazd grupowy.
 
 KONTEKST:
@@ -305,19 +313,20 @@ KONTEKST:
 - Aktywności ekipy: ${acts.length ? acts.join(', ') : 'ogólne'}
 
 ZASADY:
-1. To lista WSPÓLNA — sprzęt i rzeczy współdzielone przez ekipę, które wystarczy spakować RAZ dla wszystkich (np. namiot, apteczka, kuchenka + gaz, głośnik, listwa/ładowarki, narzędzia, nawigacja, zapas wody, worki na śmieci, środek na komary).
-2. NIE dodawaj rzeczy osobistych (ubrania, kosmetyki, dokumenty) — to osobna lista każdego.
-3. Pole "shared_gear": true dla rzeczy, które ma przynieść TYLKO JEDNA osoba dla całej grupy (np. namiot, apteczka, głośnik, kuchenka). false dla rzeczy zużywalnych/wieloszt. (np. butelki wody, worki).
-4. Skaluj ilości do liczby osób/dni w polu "qty" (np. "2 namioty 3-os.", "${Math.max(2, Math.ceil((opts.numPeople || 4) * 1.5))}L wody").
-5. Każda pozycja ma krótkie "ai_reason" (max ~8 słów).
-6. Kategorie WYŁĄCZNIE z: ${ALLOWED_CATEGORIES.join(', ')}.
-7. NIE powtarzaj: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-8. Maksymalnie ~16 pozycji.
+1. To lista WSPÓLNA — TYLKO sprzęt i rzeczy współdzielone przez ekipę, które wystarczy spakować RAZ dla wszystkich.
+2. KATEGORYCZNY ZAKAZ rzeczy osobistych — NIE dodawaj NIGDY: ubrań (stroju kąpielowego, bluzy, kurtki, butów, czapki), kosmetyków, dokumentów, powerbanku, kremu z filtrem, okularów, leków. To wszystko każdy pakuje sobie sam na swojej osobistej liście.
+${accommodationRule}
+4. Pole "shared_gear": true dla rzeczy, które ma przynieść TYLKO JEDNA osoba dla całej grupy (np. apteczka, głośnik, listwa, nawigacja). false dla rzeczy zużywalnych/wieloszt. (np. butelki wody, worki na śmieci).
+5. Skaluj ilości do liczby osób/dni w polu "qty" gdzie ma to sens.
+6. Każda pozycja ma krótkie "ai_reason" (max ~8 słów).
+7. Kategorie WYŁĄCZNIE z: ${ALLOWED_CATEGORIES.join(', ')}.
+8. NIE powtarzaj: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
+9. Maksymalnie ~14 pozycji. Tylko realnie wspólne rzeczy — lepiej krótsza, trafna lista.
 
 Zwróć obiekt JSON:
 {
   "items": [
-    { "category": "nocleg", "name": "Namiot 3-osobowy", "qty": "2", "ai_reason": "${acc}", "shared_gear": true }
+    { "category": "sprzet", "name": "Apteczka grupowa", "qty": "1", "ai_reason": "jedna na ekipę", "shared_gear": true }
   ]
 }`
 }

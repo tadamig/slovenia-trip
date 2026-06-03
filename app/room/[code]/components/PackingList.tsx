@@ -5,7 +5,7 @@ import { supabase, PackingItem, PackingProfile, Room, UserPreference } from '@/l
 import { getSessionId, getSessionName } from '@/lib/session'
 import {
   Plus, Check, Trash2, ChevronDown, ChevronRight, RefreshCw,
-  Sparkles, Hand, Loader2, Cloud, User,
+  Sparkles, Hand, Loader2, Cloud, User, X,
 } from 'lucide-react'
 
 const CATEGORIES = [
@@ -311,6 +311,12 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
     await generateShared(remaining)
   }
 
+  function openAddModal() {
+    setNewItemText('')
+    setNewItemCategory(view === 'personal' ? 'ubrania' : 'sprzet')
+    setShowAddForm(true)
+  }
+
   async function addItem() {
     if (!newItemText.trim()) return
     setAdding(true)
@@ -389,6 +395,16 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
           🎒 Wspólne
         </button>
       </div>
+
+      {/* Dodaj — przycisk u góry (otwiera okienko na środku) */}
+      {!showProfileForm && (
+        <button
+          onClick={openAddModal}
+          className="w-full flex items-center justify-center gap-2 bg-stone-800/60 border border-stone-700 hover:border-forest-600 hover:text-forest-300 rounded-xl px-4 py-2.5 text-stone-300 transition-all text-sm font-medium mb-4"
+        >
+          <Plus className="w-4 h-4" /> {view === 'personal' ? 'Dodaj do mojej listy' : 'Dodaj do wspólnych'}
+        </button>
+      )}
 
       {/* Pasek pogody */}
       {weatherSummary && (
@@ -547,34 +563,6 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         )
       })}
 
-      {/* Dodaj element */}
-      {!showProfileForm && (!showAddForm ? (
-        <button onClick={() => setShowAddForm(true)} className="w-full flex items-center gap-2 bg-stone-800/40 border border-dashed border-stone-700 hover:border-stone-600 rounded-xl px-4 py-3 text-stone-600 hover:text-stone-400 transition-all text-sm mt-2">
-          <Plus className="w-4 h-4" /> {view === 'personal' ? 'Dodaj do mojej listy' : 'Dodaj do wspólnych'}
-        </button>
-      ) : (
-        <div className="bg-stone-900 border border-stone-700 rounded-2xl p-4 space-y-3 mt-2">
-          <input
-            type="text"
-            value={newItemText}
-            onChange={e => setNewItemText(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addItem()}
-            placeholder="Nazwa elementu..."
-            className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500"
-            autoFocus
-          />
-          <select value={newItemCategory} onChange={e => setNewItemCategory(e.target.value)} className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-stone-300 focus:outline-none focus:border-forest-500">
-            {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
-          <div className="flex gap-2">
-            <button onClick={() => setShowAddForm(false)} className="flex-1 py-2.5 rounded-xl bg-stone-800 text-stone-500 text-sm">Anuluj</button>
-            <button onClick={addItem} disabled={adding || !newItemText.trim()} className="flex-1 py-2.5 rounded-xl bg-forest-600 hover:bg-forest-500 disabled:bg-stone-700 text-white text-sm font-medium transition-colors">
-              {adding ? 'Dodaję...' : 'Dodaj'}
-            </button>
-          </div>
-        </div>
-      ))}
-
       {/* Regeneruj */}
       {!showProfileForm && (
         view === 'personal' ? (
@@ -596,6 +584,63 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             Przegeneruj wspólne propozycje AI
           </button>
         )
+      )}
+
+      {/* Okienko dodawania — overlay na środku, przyciemnione tło */}
+      {showAddForm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center px-4"
+          onClick={() => !adding && setShowAddForm(false)}
+        >
+          {/* przyciemnione tło */}
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+          {/* karta */}
+          <div
+            onClick={e => e.stopPropagation()}
+            className="relative w-full max-w-sm bg-stone-900 border border-stone-700 rounded-2xl p-5 shadow-2xl animate-in"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-base font-semibold text-stone-100">
+                {view === 'personal' ? 'Dodaj do mojej listy' : 'Dodaj do wspólnych'}
+              </h3>
+              <button
+                onClick={() => !adding && setShowAddForm(false)}
+                className="text-stone-500 hover:text-stone-300 transition-colors p-1 -mr-1"
+                aria-label="Zamknij"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={newItemText}
+              onChange={e => setNewItemText(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addItem()}
+              placeholder="Nazwa elementu..."
+              className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-3 text-base text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 mb-3"
+              autoFocus
+            />
+            <select
+              value={newItemCategory}
+              onChange={e => setNewItemCategory(e.target.value)}
+              className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-3 text-base text-stone-300 focus:outline-none focus:border-forest-500 mb-4"
+            >
+              {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <button onClick={() => setShowAddForm(false)} className="flex-1 py-3 rounded-xl bg-stone-800 text-stone-400 text-sm font-medium">Anuluj</button>
+              <button
+                onClick={addItem}
+                disabled={adding || !newItemText.trim()}
+                className="flex-1 py-3 rounded-xl bg-forest-600 hover:bg-forest-500 disabled:bg-stone-700 text-white text-sm font-medium transition-colors"
+              >
+                {adding ? 'Dodaję...' : 'Dodaj'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

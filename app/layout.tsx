@@ -1,9 +1,19 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Wyprawa — Planowanie Trasy',
   description: 'Wspólne planowanie wyprawy vanem — Słowenia & Budapeszt',
+}
+
+// Naprawia mobilny bug: strona odpalała się "przybliżona" (brak width=device-width)
+// oraz iOS auto-zoom przy fokusie na input (maximum-scale=1 + inputy ≥16px).
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -300,14 +300,22 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
   }
 
   async function regenerateShared() {
-    if (!confirm('Przegeneruję wspólne propozycje AI na nowo (Twoje ręczne wpisy zostają). Kontynuować?')) return
-    const aiShared = shared.filter(i => i.ai_generated)
-    if (aiShared.length > 0) {
-      const ids = aiShared.map(i => i.id)
+    if (!confirm('Wyczyszczę wspólną listę z pozycji dodanych automatycznie (także starych) i wygeneruję ją na nowo lepszym algorytmem. Twoje ręczne wpisy zostają. Kontynuować?')) return
+    // Usuwamy zarówno świeże pozycje AI, jak i stare, automatycznie zasiane (added_by='system'/'AI').
+    // Ręczne wpisy ekipy (added_by = imię) zostają nietknięte.
+    const toClear = shared.filter(i => i.ai_generated || i.added_by === 'system' || i.added_by === 'AI')
+    if (toClear.length > 0) {
+      const ids = toClear.map(i => i.id)
       await supabase.from('packing_items').delete().in('id', ids)
       setItems(prev => prev.filter(i => !ids.includes(i.id)))
     }
-    const remaining = items.filter(i => !aiShared.some(a => a.id === i.id))
+    // Reset znacznika, żeby wymusić świeżą generację (gdyby ktoś jeszcze raz wszedł).
+    await supabase.from('packing_meta').upsert({
+      room_id: room.id,
+      shared_generated_at: null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'room_id' })
+    const remaining = items.filter(i => !toClear.some(a => a.id === i.id))
     await generateShared(remaining)
   }
 
@@ -589,7 +597,7 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
       {/* Okienko dodawania — overlay na środku, przyciemnione tło */}
       {showAddForm && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center px-4"
+          className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-20 sm:items-center sm:pt-0 overflow-y-auto"
           onClick={() => !adding && setShowAddForm(false)}
         >
           {/* przyciemnione tło */}

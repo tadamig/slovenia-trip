@@ -40,7 +40,7 @@ const TOGGLE_LABELS: Record<string, string> = {
   makeup: 'makijaż',
 }
 
-const ALLOWED_CATEGORIES = ['sprzet', 'nocleg', 'ubrania', 'jedzenie', 'dokumenty', 'inne']
+const ALLOWED_CATEGORIES = ['ubrania', 'kosmetyki', 'elektronika', 'sprzet', 'jedzenie', 'nocleg', 'dokumenty', 'inne']
 
 type WeatherContext = {
   summary: string
@@ -267,19 +267,27 @@ KONTEKST:
 ${food ? `- Preferencje jedzeniowe: ${food}` : ''}
 
 ZASADY:
-1. To lista OSOBISTA — tylko rzeczy, które każdy pakuje sobie sam (ubrania, kosmetyki, dokumenty, własna elektronika, indywidualny sprzęt do aktywności). NIE dodawaj wspólnego sprzętu grupowego (namiot, apteczka grupowa, kuchenka, głośnik) — to osobna wspólna lista.
+1. To lista OSOBISTA — tylko rzeczy, które każdy pakuje sobie sam (ubrania, higiena/kosmetyki, dokumenty, własna elektronika, indywidualny sprzęt do aktywności). NIE dodawaj wspólnego sprzętu grupowego (namiot, apteczka grupowa, kuchenka, głośnik) — to osobna wspólna lista.
 2. Dobierz ubrania do pogody i liczby dni. Podawaj sensowne ILOŚCI w polu "qty" (np. "${opts.days} koszulek", "${Math.ceil(opts.days * 1.4)} par skarpet", "1 kurtka") tam gdzie to ma sens; gdzie nie ma — pomiń qty.
-3. Uwzględnij płeć i dodatkowe info taktownie (np. kosmetyczka, leki własne, soczewki) — bez przesady i bez krępujących założeń.
-4. ZAWSZE dodaj osobiste must-have, które każdy bierze dla siebie: powerbank + kabel do ładowania oraz krem z filtrem SPF (jeśli pogoda słoneczna/ciepła). To są rzeczy OSOBISTE, nie wspólne.
+3. HIGIENA I KOSMETYKI — NIE pakuj jednej zbiorczej "kosmetyczki". ROZBIJ ją na osobne, konkretne pozycje (kategoria "kosmetyki"), zawsze m.in.: szczoteczka do zębów, pasta do zębów (mała/podróżna), dezodorant, szampon (mała/podróżna butelka), żel pod prysznic lub mydło, grzebień/szczotka, ręcznik szybkoschnący (jeśli nocleg tego wymaga). Dodatkowo wg info o osobie:
+   - mężczyzna: maszynka + pianka/żel do golenia;
+   - "rozbudowana kosmetyczka / pielęgnacja": krem do twarzy, balsam do ciała, płyn micelarny, waciki;
+   - "makijaż": podstawowy zestaw do makijażu + zmywacz;
+   - "soczewki kontaktowe": płyn do soczewek + zapasowe soczewki/okulary;
+   - "własne leki": własne leki na receptę.
+   Krem z filtrem SPF dodaj TU (kategoria "kosmetyki"), jeśli pogoda słoneczna/ciepła.
+4. ELEKTRONIKA — ZAWSZE dodaj osobiste podstawy (kategoria "elektronika"): ładowarka do telefonu, kabel USB do telefonu, powerbank, słuchawki. Jeśli info o osobie zawiera "sprzęt elektroniczny (laptop, tablet)": dorzuć laptop/tablet + jego ładowarkę. Przy wyjeździe za granicę rozważ adapter/przejściówkę do gniazdka, jeśli pasuje.
 5. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
-6. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}.
+6. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}. Dobieraj trafnie: ubrania→"ubrania", higiena/pielęgnacja/SPF/makijaż→"kosmetyki", ładowarki/kable/powerbank/słuchawki/laptop→"elektronika", paszport/dowód/bilety→"dokumenty", indywidualny sprzęt do aktywności→"sprzet". "inne" tylko ostateczność.
 7. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-8. Maksymalnie ~22 pozycji. Konkretnie, bez lania wody.
+8. Maksymalnie ~28 pozycji. Konkretnie, bez lania wody — ale higiena i elektronika MUSZĄ być rozpisane wg reguł 3 i 4.
 
 Zwróć obiekt JSON:
 {
   "items": [
-    { "category": "ubrania", "name": "Bluza polarowa", "qty": "1", "ai_reason": "chłodne wieczory ${opts.weather.tempMin ?? ''}°C" }
+    { "category": "ubrania", "name": "Bluza polarowa", "qty": "1", "ai_reason": "chłodne wieczory ${opts.weather.tempMin ?? ''}°C" },
+    { "category": "kosmetyki", "name": "Szczoteczka do zębów", "qty": "1", "ai_reason": "podstawa higieny" },
+    { "category": "elektronika", "name": "Ładowarka do telefonu", "qty": "1", "ai_reason": "codzienne ładowanie" }
   ]
 }`
 }
@@ -402,7 +410,7 @@ export async function POST(request: NextRequest) {
 
   try {
     // Wspólna lista jest teraz bogatsza (do ~22 pozycji z dłuższym uzasadnieniem) — więcej tokenów.
-    const res = await callDeepSeek(prompt, mode === 'shared' ? 3200 : 2200)
+    const res = await callDeepSeek(prompt, mode === 'shared' ? 3200 : 2800)
     if (!res.ok) {
       const text = await res.text()
       return NextResponse.json({ error: `AI error ${res.status}: ${text}`, weatherSummary: weather.summary }, { status: 502 })

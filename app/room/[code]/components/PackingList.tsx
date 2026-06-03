@@ -13,10 +13,12 @@ import {
 const DEBUG_AI_REASONS = false
 
 const CATEGORIES = [
-  { id: 'sprzet', label: '🏄 Sprzęt' },
-  { id: 'nocleg', label: '🏕️ Nocleg' },
   { id: 'ubrania', label: '👕 Ubrania' },
+  { id: 'kosmetyki', label: '🧴 Higiena i kosmetyki' },
+  { id: 'elektronika', label: '🔌 Elektronika' },
+  { id: 'sprzet', label: '🏄 Sprzęt' },
   { id: 'jedzenie', label: '🍖 Jedzenie' },
+  { id: 'nocleg', label: '🏕️ Nocleg' },
   { id: 'dokumenty', label: '📄 Dokumenty' },
   { id: 'inne', label: '📦 Inne' },
 ]

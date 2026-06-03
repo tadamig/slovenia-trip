@@ -472,8 +472,8 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
       : null
 
     try {
-      // Poszerz promień, by znaleźć miejsca poza dotychczasową pulą.
-      const widerRadius = Math.min(80, radiusKm + 20)
+      // Poszerz promień do maksimum, by znaleźć miejsca poza dotychczasową pulą.
+      const widerRadius = 80
       const discoverRes = await fetch('/api/discover', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -535,7 +535,10 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
     setSearchCount(c => c + 1)
 
     const region = countryToRegion(room.country || 'Slovenia')
-    const radius = radiusKm
+    // Zawsze pobieramy pełną pulę na maks. promień (80 km) i cache'ujemy ją.
+    // Suwak nie wywołuje już ponownego fetcha — filtruje pokazaną listę po
+    // stronie klienta w czasie rzeczywistym (p.distanceFromBase <= radiusKm).
+    const radius = 80
     const tripDaysCalc = room.start_date && room.end_date
       ? Math.ceil((new Date(room.end_date).getTime() - new Date(room.start_date).getTime()) / 86400000)
       : null
@@ -728,7 +731,11 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
   const filteredPlaces = aiPlaces.filter(p => {
     const regionOk = activeRegion === 'all' || p.region === activeRegion
     const tagOk = activeTag === null || p.tags.includes(activeTag)
-    return regionOk && tagOk
+    // Filtr suwaka w czasie rzeczywistym — pula jest pobrana na 80 km, a tu
+    // przycinamy ją do wybranego promienia. Miejsca bez znanej odległości
+    // zostawiamy widoczne (nie ukrywamy ich przez brak danych).
+    const distanceOk = p.distanceFromBase == null || p.distanceFromBase <= radiusKm
+    return regionOk && tagOk && distanceOk
   }).slice().sort((a, b) => {
     if (sortBy === 'rating') {
       return (b.googleRating ?? 0) - (a.googleRating ?? 0) ||
@@ -764,7 +771,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
         <h2 className="font-display text-lg font-semibold text-stone-100">Rekomendacje miejsc</h2>
         {aiPlaces.length > 0 && (
           <span className="text-xs text-stone-500 bg-stone-800 px-2.5 py-1 rounded-full">
-            {aiPlaces.length} miejsc
+            {dedupedPlaces.length} miejsc
           </span>
         )}
       </div>

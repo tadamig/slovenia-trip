@@ -142,7 +142,7 @@ export default function RoomPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         baseCity, country, activities,
-        radius: 40, sort: 'match', intensity, numPeople,
+        radius: 80, sort: 'match', intensity, numPeople,
       }),
     })
       .then(async (res) => {

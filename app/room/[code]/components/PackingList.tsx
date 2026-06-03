@@ -328,6 +328,11 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
   }
 
   async function saveProfileAndGenerate() {
+    // Potwierdzenie TYLKO gdy jest co resetować (istnieje już lista AI tej osoby) —
+    // pierwsze generowanie idzie bez pytania. Anulowanie zostawia okienko otwarte.
+    const myAi = myPersonal.filter(i => i.ai_generated)
+    if (myAi.length > 0 && !confirm('Zresetuję Twoją listę pakowania — usunę pozycje wygenerowane przez AI i stworzę je na nowo wg profilu. Twoje ręczne wpisy zostają. Kontynuować?')) return
+
     const payload = {
       room_id: room.id,
       session_id: sessionId,
@@ -345,7 +350,6 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
     setShowProfileForm(false)
 
     // usuń poprzednie pozycje AI tej osoby (świadoma regeneracja), zostaw ręczne
-    const myAi = myPersonal.filter(i => i.ai_generated)
     if (myAi.length > 0) {
       const ids = myAi.map(i => i.id)
       await supabase.from('packing_items').delete().in('id', ids)

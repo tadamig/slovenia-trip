@@ -98,7 +98,12 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
                 room={room}
                 myPrefs={myPrefs}
                 allPrefs={allPrefs}
-                onScrollTop={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+                onScrollTop={() => {
+                  // Kontener (gdy to on przewija) ORAZ okno (gdy przy min-h-screen
+                  // przewija się cały dokument) — w obu wariantach lecimy na górę.
+                  scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
               />
             )}
           </div>

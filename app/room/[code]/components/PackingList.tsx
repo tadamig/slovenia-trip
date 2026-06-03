@@ -205,10 +205,11 @@ export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop 
     const myPers = loaded.filter(i => i.scope === 'personal' && i.owner_session === sessionId)
     const aiShared = loaded.filter(i => i.scope === 'shared' && i.ai_generated)
 
-    // Lista osobista: jeśli pusta → generuj (lub poproś o profil)
-    if (myPers.length === 0) {
-      if (prof) generatePersonal(prof, loaded)
-      else setShowProfileForm(true)
+    // Lista osobista: jeśli pusta i mamy już profil → generuj automatycznie.
+    // Bez profilu NIE otwieramy okienka samo z siebie — user sam klika
+    // "Wygeneruj moją listę" (przycisk pustego stanu) i wtedy wyskakuje modal.
+    if (myPers.length === 0 && prof) {
+      generatePersonal(prof, loaded)
     }
 
     // Lista wspólna AI: generujemy raz na pokój

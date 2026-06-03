@@ -66,6 +66,9 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
 
   const [generatingPersonal, setGeneratingPersonal] = useState(false)
   const [generatingShared, setGeneratingShared] = useState(false)
+  // Trzymamy animację zamontowaną także w trakcie wyjścia (outro), aż samo
+  // PackingAnimation zawoła onComplete — wtedy odsłaniamy gotową listę.
+  const [packAnimActive, setPackAnimActive] = useState(false)
 
   const [newItemText, setNewItemText] = useState('')
   const [newItemCategory, setNewItemCategory] = useState('ubrania')
@@ -115,6 +118,13 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
     return () => { supabase.removeChannel(channel) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id])
+
+  // Gdy startuje generowanie dla aktualnego widoku — pokaż animację. Wygaszenie
+  // (po wyjściu) robi samo PackingAnimation przez onComplete.
+  useEffect(() => {
+    const gen = view === 'personal' ? generatingPersonal : generatingShared
+    if (gen) setPackAnimActive(true)
+  }, [generatingPersonal, generatingShared, view])
 
   async function init() {
     setLoading(true)
@@ -483,13 +493,17 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         </div>
       )}
 
-      {/* Stan generowania — animacja pakowania do plecaka */}
-      {generating && !showProfileForm && (
-        <PackingAnimation variant={view === 'personal' ? 'personal' : 'shared'} />
+      {/* Stan generowania — animacja pakowania do plecaka (gra też outro) */}
+      {packAnimActive && !showProfileForm && (
+        <PackingAnimation
+          variant={view === 'personal' ? 'personal' : 'shared'}
+          ready={!generating}
+          onComplete={() => setPackAnimActive(false)}
+        />
       )}
 
       {/* Pusta lista osobista bez profilu */}
-      {view === 'personal' && !generating && !showProfileForm && myPersonal.length === 0 && (
+      {view === 'personal' && !generating && !packAnimActive && !showProfileForm && myPersonal.length === 0 && (
         <button
           onClick={() => setShowProfileForm(true)}
           className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-forest-600/90 hover:bg-forest-500 text-white text-sm font-medium transition-colors mb-4"
@@ -498,6 +512,10 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         </button>
       )}
 
+      {/* Lista (progress + kategorie) — ukryta dopóki gra animacja/outro,
+          potem odsłania się płynnie razem (animate-fade-up). */}
+      {!packAnimActive && (
+      <div className="animate-fade-up">
       {/* Progress */}
       {visible.length > 0 && (
         <div className="h-1.5 bg-stone-800 rounded-full overflow-hidden mb-5">
@@ -609,6 +627,8 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             Przegeneruj wspólne propozycje AI
           </button>
         )
+      )}
+      </div>
       )}
 
       {/* Okienko dodawania — overlay na środku, przyciemnione tło */}

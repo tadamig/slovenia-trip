@@ -32,12 +32,33 @@ const GENDER_LABELS: Record<string, string> = {
   unspecified: 'nieokreślona',
 }
 
+// Klucz przełącznika → konkretna wskazówka dla AI. W nawiasach podpowiadamy,
+// jakie realne rzeczy ma dorzucić, gdy dana opcja jest zaznaczona.
 const TOGGLE_LABELS: Record<string, string> = {
-  ownMeds: 'bierze własne leki na receptę',
-  cosmetics: 'rozbudowana kosmetyczka / pielęgnacja',
-  contactLenses: 'soczewki kontaktowe / okulary',
-  electronics: 'sprzęt elektroniczny (laptop, tablet)',
-  makeup: 'makijaż',
+  // Pielęgnacja i zdrowie
+  ownMeds: 'bierze własne leki na receptę (dodaj: własne leki na receptę w wystarczającej ilości na cały wyjazd)',
+  cosmetics: 'rozbudowana kosmetyczka / pielęgnacja (dodaj: krem do twarzy, balsam do ciała, płyn micelarny, waciki)',
+  contactLenses: 'soczewki kontaktowe / okulary (dodaj: płyn do soczewek, zapasowe soczewki, okulary zapasowe)',
+  makeup: 'makijaż (dodaj: podstawowy zestaw do makijażu + zmywacz/płyn do demakijażu)',
+  allergies: 'alergie (dodaj: leki antyhistaminowe / własne preparaty na alergię)',
+  motionSickness: 'choroba lokomocyjna (dodaj: tabletki na chorobę lokomocyjną)',
+  specialDiet: 'dieta specjalna / suplementy (dodaj: własne suplementy, ewentualnie przekąski dietetyczne na drogę)',
+  // Sprzęt i hobby (kategoria zwykle "sprzet", elektronika osobista → "elektronika")
+  electronics: 'sprzęt elektroniczny (dodaj: laptop/tablet + jego ładowarka)',
+  drone: 'zabiera drona (dodaj do "elektronika": dron, zapasowe baterie do drona, ładowarka, dodatkowa karta pamięci, filtry ND, etui na drona)',
+  camera: 'zabiera aparat / sprzęt foto (dodaj do "elektronika": aparat, ładowarka/zapasowe baterie, zapasowe karty pamięci, ściereczka do obiektywu)',
+  snorkeling: 'snorkeling / nurkowanie (dodaj do "sprzet": maska + fajka, ewentualnie własne płetwy, strój do wody)',
+  climbing: 'wspinaczka (dodaj do "sprzet": uprząż, magnezja z woreczkiem, buty wspinaczkowe — sprzęt osobisty)',
+  cyclingGear: 'jazda rowerem (dodaj: kask rowerowy, rękawiczki rowerowe, strój rowerowy)',
+  paddle: 'kajak / SUP (dodaj do "sprzet": strój szybkoschnący, buty do wody, wodoszczelny worek na telefon/rzeczy)',
+  fishing: 'wędkarstwo (dodaj do "sprzet": osobisty sprzęt wędkarski, ewentualnie zezwolenie/licencja)',
+  gaming: 'konsola / gry (dodaj do "elektronika": przenośna konsola + ładowarka, ewentualnie pad)',
+  instrument: 'instrument muzyczny (dodaj do "sprzet": instrument + niezbędne akcesoria)',
+  // Styl wyjazdu (zwykle "ubrania")
+  fancyNights: 'planuje eleganckie wyjścia wieczorem (dodaj do "ubrania": 1 elegancki strój wyjściowy + odpowiednie buty)',
+  beach: 'dużo plażowania (dodaj: dodatkowy strój kąpielowy, ręcznik plażowy, klapki, okulary przeciwsłoneczne)',
+  longHikes: 'długie wędrówki / trekking (dodaj: buty trekkingowe, skarpety trekkingowe, bidon/bukłak, plastry na odciski)',
+  coldSensitive: 'marzlak — szybko marznie (dodaj cieplejszą warstwę: dodatkowa bluza/polar, ciepłe skarpety, czapka jeśli chłodno)',
 }
 
 const ALLOWED_CATEGORIES = ['ubrania', 'kosmetyki', 'elektronika', 'sprzet', 'jedzenie', 'nocleg', 'dokumenty', 'inne']
@@ -278,10 +299,11 @@ ZASADY:
    Krem z filtrem SPF dodaj TU (kategoria "kosmetyki"), jeśli pogoda słoneczna/ciepła.
 4. ELEKTRONIKA — ZAWSZE dodaj osobiste podstawy (kategoria "elektronika"): ładowarka do telefonu, kabel USB do telefonu, powerbank, słuchawki. Jeśli info o osobie zawiera "sprzęt elektroniczny (laptop, tablet)": dorzuć laptop/tablet + jego ładowarkę. Przy wyjeździe za granicę rozważ adapter/przejściówkę do gniazdka, jeśli pasuje.
 5. DOKUMENTY — ZAWSZE dodaj kluczowe dokumenty (kategoria "dokumenty"): dowód osobisty lub paszport, KARTA EKUZ (wyjazd po UE — refundacja leczenia za granicą), bilety/rezerwacje/potwierdzenia noclegu. Jeśli transport=auto LUB osoba prowadzi: dodatkowo prawo jazdy oraz dokumenty i ubezpieczenie auta. Te pozycje są OBOWIĄZKOWE — nie pomijaj ich nawet przy długiej liście.
-6. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
-7. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}. Dobieraj trafnie: ubrania→"ubrania", higiena/pielęgnacja/SPF/makijaż→"kosmetyki", ładowarki/kable/powerbank/słuchawki/laptop→"elektronika", paszport/dowód/EKUZ/bilety→"dokumenty", indywidualny sprzęt do aktywności→"sprzet". "inne" tylko ostateczność.
-8. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
-9. DŁUGOŚĆ: podaj tyle pozycji, ile NAPRAWDĘ trzeba na ten konkretny wyjazd — kompletnie, ale bez zapychaczy i bez dzielenia rzeczy w nieskończoność (nie rozbijaj na absurdy typu osobno lewy/prawy but). Nie ma sztywnego limitu — liczy się trafność. Must-have z reguł 3, 4 i 5 (higiena, elektronika, dokumenty) MUSZĄ się znaleźć niezależnie od długości listy.
+6. SPRZĘT, HOBBY I STYL WYJAZDU — w polu "Dodatkowe info o osobie" niektóre wpisy mają nawias "(dodaj: ...)". POTRAKTUJ te wskazówki jako OBOWIĄZKOWE: dodaj WSZYSTKIE wymienione tam rzeczy, każdą w trafnej kategorii (sprzęt do aktywności/hobby→"sprzet", elektronika→"elektronika", odzież→"ubrania", zdrowie/leki→"kosmetyki"). Nie pomijaj ich i nie skracaj listy ich kosztem.
+7. Każda pozycja ma krótkie "ai_reason" (max ~8 słów) tłumaczące dlaczego (np. "2 dni deszczu w prognozie").
+8. Kategorie WYŁĄCZNIE z listy: ${ALLOWED_CATEGORIES.join(', ')}. Dobieraj trafnie: ubrania→"ubrania", higiena/pielęgnacja/SPF/makijaż→"kosmetyki", ładowarki/kable/powerbank/słuchawki/laptop→"elektronika", paszport/dowód/EKUZ/bilety→"dokumenty", indywidualny sprzęt do aktywności→"sprzet". "inne" tylko ostateczność.
+9. NIE powtarzaj rzeczy, które już są na liście: ${opts.existingNames.length ? opts.existingNames.slice(0, 60).join(', ') : 'brak'}.
+10. DŁUGOŚĆ: podaj tyle pozycji, ile NAPRAWDĘ trzeba na ten konkretny wyjazd — kompletnie, ale bez zapychaczy i bez dzielenia rzeczy w nieskończoność (nie rozbijaj na absurdy typu osobno lewy/prawy but). Nie ma sztywnego limitu — liczy się trafność. Must-have z reguł 3, 4, 5 i 6 (higiena, elektronika, dokumenty, sprzęt/hobby/styl) MUSZĄ się znaleźć niezależnie od długości listy.
 
 Zwróć obiekt JSON:
 {

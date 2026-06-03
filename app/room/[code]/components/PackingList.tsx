@@ -31,12 +31,46 @@ const GENDER_OPTIONS = [
   { id: 'unspecified', label: '🙈 Wolę nie podawać' },
 ]
 
-const TOGGLE_OPTIONS = [
-  { id: 'ownMeds', label: '💊 Biorę własne leki' },
-  { id: 'cosmetics', label: '🧴 Rozbudowana kosmetyczka' },
-  { id: 'contactLenses', label: '👓 Soczewki / okulary' },
-  { id: 'electronics', label: '💻 Laptop / tablet' },
-  { id: 'makeup', label: '💄 Makijaż' },
+// Pytania personalizujące listę osobistą, pogrupowane tematycznie. Wszystkie
+// zaznaczenia trafiają do jednego płaskiego obiektu `toggles` (klucz → bool),
+// a /api/packing tłumaczy klucze na konkretne wskazówki dla AI.
+const PROFILE_GROUPS = [
+  {
+    title: 'Pielęgnacja i zdrowie',
+    options: [
+      { id: 'cosmetics', label: '🧴 Rozbudowana kosmetyczka' },
+      { id: 'makeup', label: '💄 Makijaż' },
+      { id: 'contactLenses', label: '👓 Soczewki / okulary' },
+      { id: 'ownMeds', label: '💊 Leki na receptę' },
+      { id: 'allergies', label: '🤧 Alergie' },
+      { id: 'motionSickness', label: '🤢 Choroba lokomocyjna' },
+      { id: 'specialDiet', label: '🥗 Dieta / suplementy' },
+    ],
+  },
+  {
+    title: 'Sprzęt i hobby',
+    options: [
+      { id: 'electronics', label: '💻 Laptop / tablet' },
+      { id: 'drone', label: '🚁 Dron' },
+      { id: 'camera', label: '📷 Aparat / foto' },
+      { id: 'snorkeling', label: '🤿 Snorkeling' },
+      { id: 'climbing', label: '🧗 Wspinaczka' },
+      { id: 'cyclingGear', label: '🚲 Rower' },
+      { id: 'paddle', label: '🛶 Kajak / SUP' },
+      { id: 'fishing', label: '🎣 Wędkarstwo' },
+      { id: 'gaming', label: '🎮 Konsola / gry' },
+      { id: 'instrument', label: '🎸 Instrument' },
+    ],
+  },
+  {
+    title: 'Styl wyjazdu',
+    options: [
+      { id: 'fancyNights', label: '🍸 Eleganckie wyjścia' },
+      { id: 'beach', label: '🏖️ Dużo plażowania' },
+      { id: 'longHikes', label: '🥾 Długie wędrówki' },
+      { id: 'coldSensitive', label: '❄️ Marzlak' },
+    ],
+  },
 ]
 
 type AiItemResponse = {
@@ -51,9 +85,10 @@ interface Props {
   room: Room
   myPrefs: UserPreference
   allPrefs?: UserPreference[]
+  onScrollTop?: () => void
 }
 
-export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
+export default function PackingList({ room, myPrefs, allPrefs = [], onScrollTop }: Props) {
   const [items, setItems] = useState<PackingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'personal' | 'shared'>('personal')
@@ -72,6 +107,9 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
 
   const [newItemText, setNewItemText] = useState('')
   const [newItemCategory, setNewItemCategory] = useState('ubrania')
+  // Dodawanie własnej kategorii: gdy w selektorze wybrane "__new__", pokazujemy
+  // pole tekstowe; wpisana nazwa staje się kategorią pozycji (category = string).
+  const [newCategoryName, setNewCategoryName] = useState('')
   const [adding, setAdding] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
@@ -326,6 +364,7 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
       alert('Ktoś z ekipy właśnie regeneruje wspólną listę. Poczekaj chwilę i odśwież.')
       return
     }
+    onScrollTop?.()
     try {
       // Usuwamy zarówno świeże pozycje AI, jak i stare, automatycznie zasiane (added_by='system'/'AI').
       // Ręczne wpisy ekipy (added_by = imię) zostają nietknięte.
@@ -352,15 +391,21 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
   function openAddModal() {
     setNewItemText('')
     setNewItemCategory(view === 'personal' ? 'ubrania' : 'sprzet')
+    setNewCategoryName('')
     setShowAddForm(true)
   }
 
   async function addItem() {
     if (!newItemText.trim()) return
+    // Kategoria: jeśli wybrano "nowa kategoria", użyj wpisanej nazwy (po przycięciu).
+    // Pusta nazwa nowej kategorii → wpada do "inne".
+    const category = newItemCategory === '__new__'
+      ? (newCategoryName.trim() || 'inne')
+      : newItemCategory
     setAdding(true)
     const row = {
       room_id: room.id,
-      category: newItemCategory,
+      category,
       name: newItemText.trim(),
       checked: false,
       added_by: myName,
@@ -405,6 +450,14 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
 
   const checkedCount = visible.filter(i => i.checked).length
   const generating = view === 'personal' ? generatingPersonal : generatingShared
+
+  // Kategorie własne (spoza stałego zestawu) wykryte w aktualnym widoku —
+  // renderujemy je po stałych, a w selektorze "Dodaj" są też do wyboru.
+  const fixedCatIds = new Set(CATEGORIES.map(c => c.id))
+  const extraCats = Array.from(new Set(visible.map(i => i.category)))
+    .filter(c => c && !fixedCatIds.has(c))
+    .map(c => ({ id: c, label: `🏷️ ${c}` }))
+  const allCategories = [...CATEGORIES, ...extraCats]
 
   if (loading) {
     return <div className="flex items-center justify-center py-16 text-stone-600 text-sm animate-pulse">Wczytuję listę pakowania...</div>
@@ -469,19 +522,23 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             ))}
           </div>
 
-          <p className="text-xs text-stone-400 mb-1.5">Dotyczy mnie</p>
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {TOGGLE_OPTIONS.map(t => {
-              const on = !!formToggles[t.id]
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setFormToggles(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
-                  className={`px-2.5 py-1.5 rounded-full text-xs border transition-all ${on ? 'bg-forest-800/40 border-forest-600 text-forest-300' : 'bg-stone-800 border-stone-700 text-stone-500'}`}
-                >{t.label}</button>
-              )
-            })}
-          </div>
+          {PROFILE_GROUPS.map(group => (
+            <div key={group.title}>
+              <p className="text-xs text-stone-400 mb-1.5">{group.title}</p>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {group.options.map(t => {
+                  const on = !!formToggles[t.id]
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setFormToggles(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                      className={`px-2.5 py-1.5 rounded-full text-xs border transition-all ${on ? 'bg-forest-800/40 border-forest-600 text-forest-300' : 'bg-stone-800 border-stone-700 text-stone-500'}`}
+                    >{t.label}</button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
 
           <button
             onClick={saveProfileAndGenerate}
@@ -526,8 +583,8 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         </div>
       )}
 
-      {/* Kategorie */}
-      {CATEGORIES.map(cat => {
+      {/* Kategorie (stałe + własne) */}
+      {allCategories.map(cat => {
         const catItems = visible.filter(i => i.category === cat.id)
         if (catItems.length === 0) return null
         const collapsed = collapsedCats.has(cat.id)
@@ -610,18 +667,18 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
       {!showProfileForm && (
         view === 'personal' ? (
           <button
-            onClick={() => setShowProfileForm(true)}
+            onClick={() => { onScrollTop?.(); setShowProfileForm(true) }}
             disabled={generatingPersonal}
-            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-600 hover:text-stone-400 text-xs transition-all"
+            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300/80 hover:text-red-200 hover:border-red-800/60 shadow-[0_0_10px_rgba(220,38,38,0.15)] text-xs transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${generatingPersonal ? 'animate-spin' : ''}`} />
             Zmień profil i przegeneruj moją listę
           </button>
         ) : (
           <button
-            onClick={regenerateShared}
+            onClick={() => regenerateShared()}
             disabled={generatingShared}
-            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-stone-800/40 border border-stone-700/40 text-stone-600 hover:text-stone-400 text-xs transition-all"
+            className="w-full flex items-center justify-center gap-2 mt-4 py-3 rounded-xl bg-red-950/40 border border-red-900/50 text-red-300/80 hover:text-red-200 hover:border-red-800/60 shadow-[0_0_10px_rgba(220,38,38,0.15)] text-xs transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${generatingShared ? 'animate-spin' : ''}`} />
             Przegeneruj wspólne propozycje AI
@@ -670,10 +727,21 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
             <select
               value={newItemCategory}
               onChange={e => setNewItemCategory(e.target.value)}
-              className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-3 text-base text-stone-300 focus:outline-none focus:border-forest-500 mb-4"
+              className={`w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-3 text-base text-stone-300 focus:outline-none focus:border-forest-500 ${newItemCategory === '__new__' ? 'mb-3' : 'mb-4'}`}
             >
-              {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              {allCategories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              <option value="__new__">➕ Nowa kategoria…</option>
             </select>
+            {newItemCategory === '__new__' && (
+              <input
+                type="text"
+                value={newCategoryName}
+                onChange={e => setNewCategoryName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addItem()}
+                placeholder="Nazwa nowej kategorii..."
+                className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-3 text-base text-stone-100 placeholder-stone-600 focus:outline-none focus:border-forest-500 mb-4"
+              />
+            )}
             <div className="flex gap-2">
               <button onClick={() => setShowAddForm(false)} className="flex-1 py-3 rounded-xl bg-stone-800 text-stone-400 text-sm font-medium">Anuluj</button>
               <button

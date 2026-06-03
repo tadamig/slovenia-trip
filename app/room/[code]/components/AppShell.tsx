@@ -94,7 +94,12 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
           </div>
           <div ref={setPanelRef('packing')} style={panelStyle('packing')}>
             {visited.packing && (
-              <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
+              <PackingList
+                room={room}
+                myPrefs={myPrefs}
+                allPrefs={allPrefs}
+                onScrollTop={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+              />
             )}
           </div>
           <div ref={setPanelRef('weather')} style={panelStyle('weather')}>

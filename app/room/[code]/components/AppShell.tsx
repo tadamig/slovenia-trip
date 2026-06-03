@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { Room, UserPreference } from '@/lib/supabase'
 import dynamic from 'next/dynamic'
 import RoomHeader from './RoomHeader'
@@ -40,66 +40,78 @@ interface Props {
 
 const TAB_IDS = TABS.map(t => t.id)
 
+// useLayoutEffect odpala się PRZED malowaniem klatki (bez migania), ale ostrzega
+// przy SSR — na serwerze spadamy więc do useEffect. Wybór raz, na poziomie modułu.
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
+
 export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefetched }: Props) {
   // Po onboardingu (Tor B) startujemy od zakładki Miejsca — tam czekają wyniki.
-  const [activeTab, setActiveTab] = useState(prefetched ? 'places' : 'profile')
+  const initialTab = prefetched ? 'places' : 'profile'
+  const [activeTab, setActiveTab] = useState(initialTab)
   // Kierunek wsuwania panelu zależny od kolejności zakładek (dalej = z prawej).
   const [slideDir, setSlideDir] = useState<'left' | 'right'>('right')
-  const placesRef = useRef<HTMLDivElement>(null)
+  // Zakładki montujemy leniwie (przy 1. wejściu) i potem TRZYMAMY zamontowane —
+  // dzięki temu nie pobierają danych od nowa i nie migają przy przełączaniu.
+  const [visited, setVisited] = useState<Record<string, boolean>>({ [initialTab]: true })
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const panelRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const goToTab = (id: string) => {
     if (id === activeTab) return
     const from = TAB_IDS.indexOf(activeTab)
     const to = TAB_IDS.indexOf(id)
     setSlideDir(to > from ? 'right' : 'left')
+    setVisited(v => (v[id] ? v : { ...v, [id]: true }))
     setActiveTab(id)
   }
 
-  // PlacesTab jest zamontowany na stałe (chowany CSS-em), więc nie remontuje się
-  // przy przełączaniu — animację wsuwania odpalamy ręcznie przez retrigger CSS.
-  useEffect(() => {
-    if (activeTab === 'places' && placesRef.current) {
-      const el = placesRef.current
+  // Wszystkie panele są zamontowane (chowane CSS-em). Animację wsuwania odpalamy
+  // ręcznie na aktywnym panelu PRZED malowaniem (useLayoutEffect) — brak migania.
+  useIsoLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    const el = panelRefs.current[activeTab]
+    if (el) {
       el.classList.remove('tab-slide-left', 'tab-slide-right')
-      // wymuś reflow, żeby animacja odpaliła ponownie
-      void el.offsetWidth
+      void el.offsetWidth // wymuś reflow, by animacja odpaliła ponownie
       el.classList.add(slideDir === 'right' ? 'tab-slide-right' : 'tab-slide-left')
     }
   }, [activeTab, slideDir])
 
-  const slideClass = slideDir === 'right' ? 'tab-slide-right' : 'tab-slide-left'
+  const setPanelRef = (id: string) => (el: HTMLDivElement | null) => { panelRefs.current[id] = el }
+  const panelStyle = (id: string) => ({ display: activeTab === id ? 'block' : ('none' as const) })
 
   return (
     <div className="min-h-screen bg-stone-950 flex flex-col">
       <RoomHeader room={room} memberCount={allPrefs.length} />
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-28">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-28">
         <div className="max-w-md mx-auto w-full">
-          {/* PlacesTab trzymamy zamontowany na stałe (chowamy CSS-em), żeby analiza AI
-              i prefetch nie ginęły przy przełączaniu zakładek i nie liczyły się od nowa. */}
-          <div style={{ display: activeTab === 'places' ? 'block' : 'none' }}>
-            <div ref={placesRef}>
-              <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
-            </div>
+          <div ref={setPanelRef('profile')} style={panelStyle('profile')}>
+            {visited.profile && (
+              <GroupProfile room={room} myPrefs={myPrefs} allPrefs={allPrefs} onReloadPrefs={onReloadPrefs} />
+            )}
           </div>
-
-          {/* Pozostałe zakładki: keyed wrapper -> animacja wsuwania przy każdej zmianie. */}
-          {activeTab !== 'places' && (
-            <div key={activeTab} className={slideClass}>
-              {activeTab === 'profile' && (
-                <GroupProfile room={room} myPrefs={myPrefs} allPrefs={allPrefs} onReloadPrefs={onReloadPrefs} />
-              )}
-              {activeTab === 'packing' && (
-                <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
-              )}
-              {activeTab === 'weather' && (
-                <WeatherWidget room={room} myPrefs={myPrefs} />
-              )}
-              {activeTab === 'map' && (
-                <MapTab room={room} myPrefs={myPrefs} />
-              )}
-            </div>
-          )}
+          <div ref={setPanelRef('packing')} style={panelStyle('packing')}>
+            {visited.packing && (
+              <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
+            )}
+          </div>
+          <div ref={setPanelRef('weather')} style={panelStyle('weather')}>
+            {visited.weather && (
+              <WeatherWidget room={room} myPrefs={myPrefs} />
+            )}
+          </div>
+          {/* PlacesTab trzymamy zamontowany na stałe, żeby analiza AI i prefetch
+              nie ginęły przy przełączaniu zakładek i nie liczyły się od nowa. */}
+          <div ref={setPanelRef('places')} style={panelStyle('places')}>
+            <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
+          </div>
+          <div ref={setPanelRef('map')} style={panelStyle('map')}>
+            {visited.map && (
+              <MapTab room={room} myPrefs={myPrefs} />
+            )}
+          </div>
         </div>
       </div>
 

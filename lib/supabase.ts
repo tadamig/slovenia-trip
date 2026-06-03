@@ -92,6 +92,37 @@ export type PlaceData = {
   sources?: number
   sentiment?: string
   region?: 'budapest' | 'slovenia'
+  subregion?: string
+  // Faza 0 (mapa + planer dni): trwale trzymamy dane potrzebne do rysowania
+  // markerów i liczenia tras/wykonalności dnia.
+  place_id?: string
+  opening_hours?: string[]   // weekday_text z Google Place Details
+  google_rating?: number
+  address?: string
+  country?: string
+}
+
+// ——— PLANER DNI (itinerary) ———
+// Jeden przystanek przypisany do konkretnego dnia wyprawy. Współdzielony w
+// czasie rzeczywistym (realtime) jak reszta — dostęp przez kod pokoju.
+export type ItineraryItem = {
+  id: string
+  room_id: string
+  day_index: number          // 0-based numer dnia wyprawy
+  position: number           // kolejność w obrębie dnia
+  place_name: string
+  place_id: string | null    // google place_id (jeśli znany)
+  lat: number | null
+  lon: number | null
+  saved_place_id: string | null  // opcjonalne powiązanie z saved_places
+  start_time: string | null  // "HH:MM" — planowana godzina startu
+  duration_min: number | null // planowany czas zwiedzania (min)
+  opening_hours: string[] | null // weekday_text (cache pod kartę dnia)
+  tags: string[]
+  note: string | null
+  session_id: string | null  // kto dodał
+  created_at: string
+  updated_at: string
 }
 
 export type PlaceNote = {

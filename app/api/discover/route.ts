@@ -46,6 +46,7 @@ type DiscoverPlace = {
   verified: boolean
   source: 'google'
   isOpen?: boolean | null
+  openingHours?: string[]   // weekday_text z Place Details (pod planer dni / mapę)
   website?: string
   recentReviewHighlights?: string[]
   curated: boolean
@@ -731,6 +732,7 @@ export async function POST(request: NextRequest) {
     await mapLimit(top, 6, async (p) => {
       const details = await getPlaceDetails(p.googlePlaceId)
       if (details.opening_hours?.open_now !== undefined) p.isOpen = details.opening_hours.open_now
+      if (Array.isArray(details.opening_hours?.weekday_text)) p.openingHours = details.opening_hours.weekday_text
       if (details.price_level !== undefined) p.priceLevel = details.price_level
       if (details.rating !== undefined) p.googleRating = details.rating
       if (typeof details.user_ratings_total === 'number') p.googleTotalRatings = details.user_ratings_total

@@ -52,6 +52,7 @@ interface AIPlace {
   googleTotalRatings?: number
   googlePlaceId?: string
   isOpen?: boolean | null
+  openingHours?: string[] // weekday_text z Google (pod mapę / planer dni)
   googleAddress?: string
   address?: string
   website?: string
@@ -712,7 +713,17 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
     const { data } = await supabase.from('saved_places').upsert({
       room_id: room.id,
       place_name: place.name,
-      place_data: { description: place.description, activities: place.tags, sources: place.sourceCount, sentiment: place.sentiment, region: place.region, subregion: place.subregion },
+      place_data: {
+        description: place.description, activities: place.tags, sources: place.sourceCount,
+        sentiment: place.sentiment, region: place.region, subregion: place.subregion,
+        // Faza 0: trwale zapisujemy współrzędne i metadane pod mapę + planer dni.
+        coordinates: (place.lat != null && place.lon != null) ? [place.lat, place.lon] : undefined,
+        place_id: place.googlePlaceId,
+        opening_hours: place.openingHours,
+        google_rating: place.googleRating,
+        address: place.googleAddress || place.address,
+        country: place.country,
+      },
       votes: 1, voters: [sessionId], notes: [], tags: place.tags,
     }, { onConflict: 'room_id,place_name', ignoreDuplicates: true }).select().single()
     if (data) setSavedPlaces(prev => prev.find(p => p.id === data.id) ? prev : [...prev, data])

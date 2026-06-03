@@ -55,6 +55,28 @@ CREATE TABLE IF NOT EXISTS saved_places (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 5. ITINERARY ITEMS — planer dni (przystanki przypisane do dnia)
+CREATE TABLE IF NOT EXISTS itinerary_items (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  day_index INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  place_name TEXT NOT NULL,
+  place_id TEXT,
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION,
+  saved_place_id UUID REFERENCES saved_places(id) ON DELETE SET NULL,
+  start_time TEXT,
+  duration_min INTEGER,
+  opening_hours JSONB,
+  tags JSONB DEFAULT '[]',
+  note TEXT,
+  session_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS itinerary_items_room_day_idx ON itinerary_items (room_id, day_index, position);
+
 -- ============================================
 -- REALTIME — włącz dla wszystkich tabel
 -- ============================================
@@ -62,6 +84,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE rooms;
 ALTER PUBLICATION supabase_realtime ADD TABLE user_preferences;
 ALTER PUBLICATION supabase_realtime ADD TABLE packing_items;
 ALTER PUBLICATION supabase_realtime ADD TABLE saved_places;
+ALTER PUBLICATION supabase_realtime ADD TABLE itinerary_items;
 
 -- ============================================
 -- ROW LEVEL SECURITY — dostęp przez room_id
@@ -77,6 +100,8 @@ CREATE POLICY "public_access_rooms" ON rooms FOR ALL USING (true) WITH CHECK (tr
 CREATE POLICY "public_access_prefs" ON user_preferences FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "public_access_packing" ON packing_items FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "public_access_places" ON saved_places FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE itinerary_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public_access_itinerary" ON itinerary_items FOR ALL USING (true) WITH CHECK (true);
 
 -- ============================================
 -- FUNKCJA — generowanie unikalnego kodu 6-znakowego

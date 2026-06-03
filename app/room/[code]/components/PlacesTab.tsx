@@ -552,7 +552,7 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
 
     // Mapuje pulę z silnika: pole `sources` ({url,title}) to źródła blogowe —
     // przenosimy je do `blogSources`, by karta pokazała "Wspomniane w:".
-    const mapDiscover = (arr: any[]) => arr.slice(0, 60).map((p: any) => {
+    const mapDiscover = (arr: any[]) => arr.slice(0, 100).map((p: any) => {
       const { sources, ...rest } = p
       return { ...rest, blogSources: Array.isArray(sources) ? sources : undefined }
     })

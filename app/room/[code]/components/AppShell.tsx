@@ -118,10 +118,10 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
       {/* Pływający pasek-pigułka — liquid glass + kolorowa poświata */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-3 w-full max-w-md flex justify-center">
         <div className="relative">
-          {/* kolorowa poświata pod paskiem (forest → water) */}
+          {/* subtelna poświata pod paskiem (forest → water) */}
           <div
             aria-hidden
-            className="absolute -inset-1.5 rounded-full bg-gradient-to-r from-forest-500/45 via-water-500/35 to-water-400/45 blur-xl opacity-70 pointer-events-none"
+            className="absolute -inset-1 rounded-full bg-gradient-to-r from-forest-400/20 via-water-400/15 to-water-300/20 blur-lg opacity-50 pointer-events-none"
           />
           {/* szklany pasek */}
           <div className="relative flex items-center justify-center gap-1 rounded-full px-2 py-1.5 bg-stone-900/40 backdrop-blur-2xl border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
@@ -138,7 +138,7 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
                   onClick={() => goToTab(tab.id)}
                   className={`relative z-10 flex flex-col items-center justify-center gap-0.5 rounded-full transition-all duration-300 min-w-0 ${
                     active
-                      ? 'bg-gradient-to-br from-forest-500 to-water-500 text-white px-3.5 py-1.5 shadow-[0_0_18px_rgba(44,196,255,0.55)]'
+                      ? 'bg-gradient-to-br from-forest-500/80 to-water-500/80 text-white px-3.5 py-1.5 border border-white/20 shadow-[0_0_9px_rgba(44,196,255,0.28)]'
                       : 'text-stone-400 hover:text-white px-2.5 py-1.5'
                   }`}
                 >

@@ -8,6 +8,12 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY
 
 // Cache (Supabase) — wyniki silnika zmieniają się wolno, więc cache'ujemy pulę.
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000 // 12h
+
+// FIX4: single-flight — koalescencja równoległych identycznych zapytań (ten sam cacheKey)
+// na poziomie instancji serwerless. Zimny cache + kilka osob klikających „Szukaj" naraz
+// = jedno realne wykonanie zamiast N (oszczędza Google/DeepSeek i ujednolica wynik).
+type DiscoverPayload = { places: DiscoverPlace[]; shops: unknown[]; baseLat: number | null; baseLon: number | null; meta: Record<string, unknown> }
+const inFlightDiscover = new Map<string, Promise<DiscoverPayload>>()
 const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim()
 const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim()
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
@@ -516,6 +522,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // FIX4: single-flight — jeśli identyczne zapytanie już leci, doczep się do niego.
+    let payloadPromise = inFlightDiscover.get(cacheKey)
+    if (!payloadPromise) {
+      payloadPromise = (async (): Promise<DiscoverPayload> => {
     // Layer 0 (baza wiedzy z blogów) + Layer 1 (kuracja DeepSeek) — równolegle.
     const [curatedRows, curated] = await Promise.all([
       readCuratedPlaces(country, effActivities),
@@ -757,23 +767,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Zapisz do cache pulę posortowaną domyślnie wg score (klucz pomija sort)
-    await writeCache(cacheKey, {
+    const payload: DiscoverPayload = {
       places: sortPlaces(quality, 'match'),
       shops,
       baseLat: lat,
       baseLon: lon,
       meta,
-    })
+    }
+    await writeCache(cacheKey, payload)
+    return payload
+      })().finally(() => { inFlightDiscover.delete(cacheKey) })
+      inFlightDiscover.set(cacheKey, payloadPromise)
+    }
 
-    // Finalne sortowanie wg wyboru użytkownika
-    const sorted = sortPlaces(quality, sort)
+    const payload = await payloadPromise
 
+    // Finalne sortowanie wg wyboru użytkownika (poza single-flight — sort jest per-request)
     return NextResponse.json({
-      places: sorted,
-      shops,
-      baseLat: lat,
-      baseLon: lon,
-      meta: { ...meta, sort, cached: false },
+      places: sortPlaces(payload.places, sort),
+      shops: payload.shops,
+      baseLat: payload.baseLat,
+      baseLon: payload.baseLon,
+      meta: { ...payload.meta, sort, cached: false },
     })
   } catch (err) {
     return NextResponse.json({ places: [], error: String(err) })

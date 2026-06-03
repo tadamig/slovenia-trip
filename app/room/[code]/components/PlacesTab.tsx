@@ -704,20 +704,22 @@ export default function PlacesTab({ room, myPrefs, allPrefs, prefetched }: Props
 
   async function savePlace(place: AIPlace) {
     if (savedPlaces.find(s => s.place_name === place.name)) return
-    const { data } = await supabase.from('saved_places').insert({
+    // FIX2: upsert z unikalnym indeksem (room_id, place_name) — chroni przed duplikatami
+    // przy jednoczesnym zapisie tego samego miejsca przez kilka osob.
+    const { data } = await supabase.from('saved_places').upsert({
       room_id: room.id,
       place_name: place.name,
       place_data: { description: place.description, activities: place.tags, sources: place.sourceCount, sentiment: place.sentiment, region: place.region, subregion: place.subregion },
       votes: 1, voters: [sessionId], notes: [], tags: place.tags,
-    }).select().single()
-    if (data) setSavedPlaces(prev => [...prev, data])
+    }, { onConflict: 'room_id,place_name', ignoreDuplicates: true }).select().single()
+    if (data) setSavedPlaces(prev => prev.find(p => p.id === data.id) ? prev : [...prev, data])
   }
 
-  async function votePlace(placeId: string, voters: string[], votes: number) {
-    const hasVoted = voters.includes(sessionId)
-    const newVoters = hasVoted ? voters.filter(v => v !== sessionId) : [...voters, sessionId]
-    const { data } = await supabase.from('saved_places').update({ votes: hasVoted ? votes - 1 : votes + 1, voters: newVoters }).eq('id', placeId).select().single()
-    if (data) setSavedPlaces(prev => prev.map(p => p.id === placeId ? data : p))
+  async function votePlace(placeId: string, _voters: string[], _votes: number) {
+    // FIX1: atomowe przelaczenie glosu po stronie bazy (RPC toggle_vote) —
+    // eliminuje gubione glosy przy jednoczesnym glosowaniu (read-modify-write race).
+    const { data } = await supabase.rpc('toggle_vote', { p_id: placeId, p_session: sessionId })
+    if (data) setSavedPlaces(prev => prev.map(p => p.id === placeId ? (data as any) : p))
   }
 
   async function addNote(placeId: string, text: string) {

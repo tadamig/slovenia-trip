@@ -304,23 +304,36 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
   }
 
   async function regenerateShared() {
+    if (generatingShared) return
     if (!confirm('Wyczyszczę wspólną listę z pozycji dodanych automatycznie (także starych) i wygeneruję ją na nowo lepszym algorytmem. Twoje ręczne wpisy zostają. Kontynuować?')) return
-    // Usuwamy zarówno świeże pozycje AI, jak i stare, automatycznie zasiane (added_by='system'/'AI').
-    // Ręczne wpisy ekipy (added_by = imię) zostają nietknięte.
-    const toClear = shared.filter(i => i.ai_generated || i.added_by === 'system' || i.added_by === 'AI')
-    if (toClear.length > 0) {
-      const ids = toClear.map(i => i.id)
-      await supabase.from('packing_items').delete().in('id', ids)
-      setItems(prev => prev.filter(i => !ids.includes(i.id)))
+    // FIX3: soft-lock — atomowo przejmij blokadę regeneracji. Jeśli ktoś z ekipy
+    // już regeneruje wspólną listę, przerwij, żeby nie zdublować pozycji AI.
+    const { data: claimed } = await supabase.rpc('claim_shared_regen', { p_room_id: room.id, p_ttl_seconds: 90 })
+    if (!claimed) {
+      alert('Ktoś z ekipy właśnie regeneruje wspólną listę. Poczekaj chwilę i odśwież.')
+      return
     }
-    // Reset znacznika, żeby wymusić świeżą generację (gdyby ktoś jeszcze raz wszedł).
-    await supabase.from('packing_meta').upsert({
-      room_id: room.id,
-      shared_generated_at: null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'room_id' })
-    const remaining = items.filter(i => !toClear.some(a => a.id === i.id))
-    await generateShared(remaining)
+    try {
+      // Usuwamy zarówno świeże pozycje AI, jak i stare, automatycznie zasiane (added_by='system'/'AI').
+      // Ręczne wpisy ekipy (added_by = imię) zostają nietknięte.
+      const toClear = shared.filter(i => i.ai_generated || i.added_by === 'system' || i.added_by === 'AI')
+      if (toClear.length > 0) {
+        const ids = toClear.map(i => i.id)
+        await supabase.from('packing_items').delete().in('id', ids)
+        setItems(prev => prev.filter(i => !ids.includes(i.id)))
+      }
+      // Reset znacznika, żeby wymusić świeżą generację (gdyby ktoś jeszcze raz wszedł).
+      await supabase.from('packing_meta').upsert({
+        room_id: room.id,
+        shared_generated_at: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'room_id' })
+      const remaining = items.filter(i => !toClear.some(a => a.id === i.id))
+      await generateShared(remaining)
+    } finally {
+      // Zwolnij blokadę niezależnie od wyniku.
+      await supabase.rpc('release_shared_regen', { p_room_id: room.id })
+    }
   }
 
   function openAddModal() {

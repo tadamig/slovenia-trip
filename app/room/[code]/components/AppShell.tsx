@@ -115,26 +115,39 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
         </div>
       </div>
 
-      {/* Pływający pasek-pigułka */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-3 w-full max-w-md">
-        <div className="flex items-center justify-between gap-1 mx-auto bg-stone-900/85 backdrop-blur-md border border-stone-700/50 rounded-full px-2 py-1.5 shadow-lg shadow-black/50">
-          {TABS.map(tab => {
-            const active = activeTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                onClick={() => goToTab(tab.id)}
-                className={`flex flex-col items-center justify-center gap-0.5 rounded-full transition-all duration-200 min-w-0 ${
-                  active
-                    ? 'bg-forest-500 text-white px-3.5 py-1.5 shadow-md shadow-forest-900/40'
-                    : 'text-stone-500 hover:text-stone-300 px-2.5 py-1.5'
-                }`}
-              >
-                <span className="text-lg leading-none">{tab.icon}</span>
-                <span className="text-[10px] font-medium leading-none truncate">{tab.label}</span>
-              </button>
-            )
-          })}
+      {/* Pływający pasek-pigułka — liquid glass + kolorowa poświata */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-3 w-full max-w-md flex justify-center">
+        <div className="relative">
+          {/* kolorowa poświata pod paskiem (forest → water) */}
+          <div
+            aria-hidden
+            className="absolute -inset-1.5 rounded-full bg-gradient-to-r from-forest-500/45 via-water-500/35 to-water-400/45 blur-xl opacity-70 pointer-events-none"
+          />
+          {/* szklany pasek */}
+          <div className="relative flex items-center justify-center gap-1 rounded-full px-2 py-1.5 bg-stone-900/40 backdrop-blur-2xl border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
+            {/* górne światło (glass highlight) */}
+            <div
+              aria-hidden
+              className="absolute inset-x-3 top-0 h-1/2 rounded-full bg-gradient-to-b from-white/15 to-transparent pointer-events-none z-0"
+            />
+            {TABS.map(tab => {
+              const active = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => goToTab(tab.id)}
+                  className={`relative z-10 flex flex-col items-center justify-center gap-0.5 rounded-full transition-all duration-300 min-w-0 ${
+                    active
+                      ? 'bg-gradient-to-br from-forest-500 to-water-500 text-white px-3.5 py-1.5 shadow-[0_0_18px_rgba(44,196,255,0.55)]'
+                      : 'text-stone-400 hover:text-white px-2.5 py-1.5'
+                  }`}
+                >
+                  <span className="text-lg leading-none">{tab.icon}</span>
+                  <span className="text-[10px] font-medium leading-none truncate">{tab.label}</span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
     </div>

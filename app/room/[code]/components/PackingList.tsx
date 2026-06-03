@@ -7,6 +7,7 @@ import {
   Plus, Check, Trash2, ChevronDown, ChevronRight, RefreshCw,
   Sparkles, Hand, Loader2, Cloud, User, X,
 } from 'lucide-react'
+import PackingAnimation from './PackingAnimation'
 
 // Opisy AI ("dlaczego ta rzecz") są zapisywane w DB do celów debugu, ale dla
 // użytkownika są zbędne. Przełącz na true, by zobaczyć je na kartach (debug).
@@ -482,12 +483,9 @@ export default function PackingList({ room, myPrefs, allPrefs = [] }: Props) {
         </div>
       )}
 
-      {/* Stan generowania */}
+      {/* Stan generowania — animacja pakowania do plecaka */}
       {generating && !showProfileForm && (
-        <div className="flex items-center justify-center gap-2 py-8 text-stone-500 text-sm">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          {view === 'personal' ? 'AI szykuje Twoją listę...' : 'AI szykuje wspólny sprzęt...'}
-        </div>
+        <PackingAnimation variant={view === 'personal' ? 'personal' : 'shared'} />
       )}
 
       {/* Pusta lista osobista bez profilu */}

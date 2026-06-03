@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Room, UserPreference } from '@/lib/supabase'
 import dynamic from 'next/dynamic'
 import RoomHeader from './RoomHeader'
@@ -38,50 +38,91 @@ interface Props {
   prefetched?: { places: any[]; baseLat: number | null; baseLon: number | null } | null
 }
 
+const TAB_IDS = TABS.map(t => t.id)
+
 export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefetched }: Props) {
   // Po onboardingu (Tor B) startujemy od zakładki Miejsca — tam czekają wyniki.
   const [activeTab, setActiveTab] = useState(prefetched ? 'places' : 'profile')
+  // Kierunek wsuwania panelu zależny od kolejności zakładek (dalej = z prawej).
+  const [slideDir, setSlideDir] = useState<'left' | 'right'>('right')
+  const placesRef = useRef<HTMLDivElement>(null)
+
+  const goToTab = (id: string) => {
+    if (id === activeTab) return
+    const from = TAB_IDS.indexOf(activeTab)
+    const to = TAB_IDS.indexOf(id)
+    setSlideDir(to > from ? 'right' : 'left')
+    setActiveTab(id)
+  }
+
+  // PlacesTab jest zamontowany na stałe (chowany CSS-em), więc nie remontuje się
+  // przy przełączaniu — animację wsuwania odpalamy ręcznie przez retrigger CSS.
+  useEffect(() => {
+    if (activeTab === 'places' && placesRef.current) {
+      const el = placesRef.current
+      el.classList.remove('tab-slide-left', 'tab-slide-right')
+      // wymuś reflow, żeby animacja odpaliła ponownie
+      void el.offsetWidth
+      el.classList.add(slideDir === 'right' ? 'tab-slide-right' : 'tab-slide-left')
+    }
+  }, [activeTab, slideDir])
+
+  const slideClass = slideDir === 'right' ? 'tab-slide-right' : 'tab-slide-left'
 
   return (
     <div className="min-h-screen bg-stone-950 flex flex-col">
       <RoomHeader room={room} memberCount={allPrefs.length} />
 
-      <div className="flex-1 overflow-y-auto pb-20">
-        {activeTab === 'profile' && (
-          <GroupProfile room={room} myPrefs={myPrefs} allPrefs={allPrefs} onReloadPrefs={onReloadPrefs} />
-        )}
-        {activeTab === 'packing' && (
-          <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
-        )}
-        {activeTab === 'weather' && (
-          <WeatherWidget room={room} myPrefs={myPrefs} />
-        )}
-        {/* PlacesTab trzymamy zamontowany na stałe (chowamy CSS-em), żeby analiza AI
-            i prefetch nie ginęły przy przełączaniu zakładek i nie liczyły się od nowa. */}
-        <div style={{ display: activeTab === 'places' ? 'block' : 'none' }}>
-          <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-28">
+        <div className="max-w-md mx-auto w-full">
+          {/* PlacesTab trzymamy zamontowany na stałe (chowamy CSS-em), żeby analiza AI
+              i prefetch nie ginęły przy przełączaniu zakładek i nie liczyły się od nowa. */}
+          <div style={{ display: activeTab === 'places' ? 'block' : 'none' }}>
+            <div ref={placesRef}>
+              <PlacesTab room={room} myPrefs={myPrefs} allPrefs={allPrefs} prefetched={prefetched} />
+            </div>
+          </div>
+
+          {/* Pozostałe zakładki: keyed wrapper -> animacja wsuwania przy każdej zmianie. */}
+          {activeTab !== 'places' && (
+            <div key={activeTab} className={slideClass}>
+              {activeTab === 'profile' && (
+                <GroupProfile room={room} myPrefs={myPrefs} allPrefs={allPrefs} onReloadPrefs={onReloadPrefs} />
+              )}
+              {activeTab === 'packing' && (
+                <PackingList room={room} myPrefs={myPrefs} allPrefs={allPrefs} />
+              )}
+              {activeTab === 'weather' && (
+                <WeatherWidget room={room} myPrefs={myPrefs} />
+              )}
+              {activeTab === 'map' && (
+                <MapTab room={room} myPrefs={myPrefs} />
+              )}
+            </div>
+          )}
         </div>
-        {activeTab === 'map' && (
-          <MapTab room={room} myPrefs={myPrefs} />
-        )}
       </div>
 
-      {/* Bottom tab bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-stone-900/95 backdrop-blur-sm border-t border-stone-800 px-2 py-2 z-50">
-        <div className="flex justify-around max-w-lg mx-auto">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all duration-150 min-w-0 ${
-                activeTab === tab.id ? 'text-forest-400' : 'text-stone-600 hover:text-stone-400'
-              }`}
-            >
-              <span className="text-lg leading-none">{tab.icon}</span>
-              <span className="text-[10px] font-medium truncate">{tab.label}</span>
-              {activeTab === tab.id && <div className="w-1 h-1 bg-forest-400 rounded-full" />}
-            </button>
-          ))}
+      {/* Pływający pasek-pigułka */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-3 w-full max-w-md">
+        <div className="flex items-center justify-between gap-1 mx-auto bg-stone-900/85 backdrop-blur-md border border-stone-700/50 rounded-full px-2 py-1.5 shadow-lg shadow-black/50">
+          {TABS.map(tab => {
+            const active = activeTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => goToTab(tab.id)}
+                className={`flex flex-col items-center justify-center gap-0.5 rounded-full transition-all duration-200 min-w-0 ${
+                  active
+                    ? 'bg-forest-500 text-white px-3.5 py-1.5 shadow-md shadow-forest-900/40'
+                    : 'text-stone-500 hover:text-stone-300 px-2.5 py-1.5'
+                }`}
+              >
+                <span className="text-lg leading-none">{tab.icon}</span>
+                <span className="text-[10px] font-medium leading-none truncate">{tab.label}</span>
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>

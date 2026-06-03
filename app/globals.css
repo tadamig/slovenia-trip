@@ -47,6 +47,18 @@ body {
   animation: modal-pop 0.16s ease-out;
 }
 
+/* Wsuwanie zakładek (slide) z kierunkiem */
+@keyframes slideFromRight {
+  from { opacity: 0; transform: translateX(26px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideFromLeft {
+  from { opacity: 0; transform: translateX(-26px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.tab-slide-right { animation: slideFromRight 0.28s cubic-bezier(0.22, 0.61, 0.36, 1); }
+.tab-slide-left  { animation: slideFromLeft  0.28s cubic-bezier(0.22, 0.61, 0.36, 1); }
+
 /* Animation delays for stagger */
 .delay-100 { animation-delay: 100ms; }
 .delay-200 { animation-delay: 200ms; }

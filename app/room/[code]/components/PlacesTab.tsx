@@ -309,7 +309,10 @@ function PlaceCard({ place, groupActivities, isSaved, onSave, savedData, onVote,
           className="flex items-center gap-1.5 text-stone-500 hover:text-stone-300 text-xs transition-colors"
         >
           <Star className="w-3 h-3" />
-          {place.sourceCount}x · {place.sentiment}
+          {(() => {
+            const m = Math.max(place.mentionCount || 0, place.blogSources?.length || 0, place.sourceCount || 0)
+            return m > 0 ? `wspomniany ${m} ${m === 1 ? 'raz' : 'razy'}` : (place.sentiment || 'Szczegóły')
+          })()}
           <ChevronDown className={`w-3 h-3 transition-transform ${showSources ? 'rotate-180' : ''}`} />
         </button>
         <a

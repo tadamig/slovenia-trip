@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ItineraryItem, SavedPlace, DayInsightPayload } from '@/lib/supabase'
 import { NewStop } from './useItinerary'
+import CityAutocomplete from './CityAutocomplete'
 import {
   dateForDay, formatDayDate, openingLineForDate, isOpenAt, OpenState,
   summarizeFeasibility, formatDuration, DAY_BUDGET_MIN,
@@ -19,6 +20,19 @@ const ACTIVITY_TAGS: Record<string, string> = {
 }
 
 const DURATION_PRESETS = [30, 60, 90, 120, 180]
+
+// Kategorie wyszukiwania bazy dnia (klucz = aktywność discover).
+const CATEGORIES: { key: string; label: string }[] = [
+  { key: 'food', label: '🍽️ Jedzenie' },
+  { key: 'sightseeing', label: '🏛️ Atrakcje' },
+  { key: 'sup', label: '🏄 SUP' },
+  { key: 'trekking', label: '🥾 Trekking' },
+  { key: 'sunset', label: '🌅 Widoki' },
+  { key: 'relax', label: '🧘 Relaks' },
+  { key: 'nightlife', label: '🍺 Nocne życie' },
+  { key: 'markets', label: '🛒 Targi' },
+  { key: 'photo', label: '📸 Foto' },
+]
 
 export type Leg = { distanceText: string; durationMin: number }
 
@@ -59,6 +73,12 @@ interface Props {
   nearby: NearbyRec[]
   nearbyLoading: boolean
   onAddNearby: (rec: NearbyRec) => void
+  dayCity: string
+  dayRadius: number
+  dayCategories: string[]
+  onSetCity: (city: string, country: string) => void
+  onSetRadius: (radius: number) => void
+  onToggleCategory: (cat: string) => void
 }
 
 function savedToStop(sp: SavedPlace): NewStop {
@@ -94,6 +114,7 @@ export default function DayPlanner({
   onAddStop, onRemoveStop, onMoveWithinDay, onMoveToDay, onUpdateStop, onFocusPlace,
   insight, insightFresh, insightLoading, onAnalyze,
   nearby, nearbyLoading, onAddNearby,
+  dayCity, dayRadius, dayCategories, onSetCity, onSetRadius, onToggleCategory,
 }: Props) {
   const [picker, setPicker] = useState(false)
   const [weather, setWeather] = useState<DayWeather | null>(null)
@@ -238,7 +259,7 @@ export default function DayPlanner({
       <div className="px-4 pt-2 pb-3">
         {dayItems.length === 0 ? (
           <p className="text-stone-600 text-xs bg-stone-800/30 border border-dashed border-stone-700/40 rounded-xl px-3 py-4 text-center">
-            Pusty dzień. Dodaj zapisane miejsca przyciskiem poniżej — policzę trasę, czasy i sprawdzę, czy się wyrobicie.
+            Pusty dzień. Ustaw poniżej miasto/okolicę dnia, wybierz miejsca z podpowiedzi — policzę trasę, czasy i sprawdzę, czy się wyrobicie.
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -398,6 +419,88 @@ export default function DayPlanner({
           </div>
         )}
 
+        {/* Baza dnia + eksploracja okolicy (Faza 3.4) */}
+        <div className="mt-3 bg-stone-800/30 border border-stone-700/40 rounded-xl p-3 space-y-3">
+          <CityAutocomplete
+            value={dayCity}
+            onChange={(c, country) => onSetCity(c, country)}
+            label="📍 Gdzie jesteście tego dnia?"
+            placeholder="np. Budapeszt, Bled, Ljubljana…"
+          />
+
+          {dayCity ? (
+            <>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-stone-500 font-medium">Szukaj w promieniu</span>
+                  <span className="text-xs text-water-400 font-semibold">{dayRadius} km</span>
+                </div>
+                <input
+                  type="range" min={10} max={80} step={5} value={dayRadius}
+                  onChange={(e) => onSetRadius(parseInt(e.target.value, 10))}
+                  className="w-full accent-water-500"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {CATEGORIES.map((c) => {
+                  const on = dayCategories.includes(c.key)
+                  return (
+                    <button
+                      key={c.key}
+                      onClick={() => onToggleCategory(c.key)}
+                      className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
+                        on
+                          ? 'bg-forest-600/70 text-white border-forest-500/50'
+                          : 'bg-stone-800/60 text-stone-400 border-stone-700/40 hover:text-stone-200'
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div>
+                <p className="text-xs text-water-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> W okolicy: {dayCity}
+                </p>
+                {nearbyLoading && nearby.length === 0 ? (
+                  <div className="space-y-1.5">
+                    {[0, 1, 2].map((i) => <div key={i} className="h-12 bg-stone-800/40 rounded-xl animate-pulse" />)}
+                  </div>
+                ) : nearby.length === 0 ? (
+                  <p className="text-stone-600 text-xs">Brak nowych podpowiedzi — zmień kategorie albo zwiększ promień.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {nearby.map((r) => (
+                      <div key={r.googlePlaceId} className="flex items-center gap-2.5 bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2">
+                        <MapPin className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-stone-200 text-xs font-medium truncate">{r.name}</p>
+                          <p className="text-stone-500 text-[11px] truncate">
+                            {r.googleRating ? `⭐ ${r.googleRating}` : ''}
+                            {r.googleRating && (r.tags?.length || r.distanceFromBase != null) ? ' · ' : ''}
+                            {(r.tags || []).slice(0, 3).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
+                            {r.distanceFromBase != null ? `${r.tags?.length ? ' · ' : ''}${r.distanceFromBase} km` : ''}
+                          </p>
+                        </div>
+                        <button onClick={() => onAddNearby(r)} className="text-amber-400 hover:text-amber-300 flex-shrink-0" title="Dodaj do dnia">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-stone-500 text-xs">
+              Ustaw miasto/okolicę tego dnia — podpowiem ciekawe miejsca w pobliżu (do 80 km), a Ty dorzucisz je wprost do planu.
+            </p>
+          )}
+        </div>
+
         {/* Analiza dnia (AI + parking) */}
         {dayItems.length > 0 && (
           <div className="mt-3">
@@ -500,9 +603,9 @@ export default function DayPlanner({
         {/* Dodawanie miejsc */}
         <button
           onClick={() => setPicker((v) => !v)}
-          className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-stone-800/40 border border-dashed border-stone-700/40 text-stone-300 text-sm hover:border-forest-700/50 transition-all"
+          className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-stone-800/30 border border-dashed border-stone-700/40 text-stone-400 text-xs hover:border-forest-700/50 transition-all"
         >
-          <Plus className="w-4 h-4" /> Dodaj miejsce do dnia
+          <Plus className="w-3.5 h-3.5" /> Dodaj z zapisanych miejsc
         </button>
 
         {picker && (
@@ -534,44 +637,6 @@ export default function DayPlanner({
                     </div>
                     <Plus className="w-4 h-4 text-stone-500 flex-shrink-0" />
                   </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Polecajki w okolicy dnia (auto w tle) */}
-        {dayItems.length > 0 && (nearbyLoading || nearby.length > 0) && (
-          <div className="mt-3">
-            <p className="text-xs text-water-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> W okolicy mogłoby się spodobać
-            </p>
-            {nearbyLoading && nearby.length === 0 ? (
-              <div className="space-y-1.5">
-                {[0, 1, 2].map((i) => <div key={i} className="h-12 bg-stone-800/40 rounded-xl animate-pulse" />)}
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {nearby.map((r) => (
-                  <div key={r.googlePlaceId} className="flex items-center gap-2.5 bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2">
-                    <MapPin className="w-4 h-4 text-water-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-stone-200 text-xs font-medium truncate">{r.name}</p>
-                      <p className="text-stone-500 text-[11px] truncate">
-                        {r.googleRating ? `⭐ ${r.googleRating}` : ''}
-                        {r.googleRating && (r.tags?.length || r.distanceFromBase != null) ? ' · ' : ''}
-                        {(r.tags || []).slice(0, 3).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
-                        {r.distanceFromBase != null ? `${r.tags?.length ? ' · ' : ''}${r.distanceFromBase} km` : ''}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => onAddNearby(r)}
-                      className="text-water-400 hover:text-water-300 flex-shrink-0"
-                      title="Dodaj do dnia"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
                 ))}
               </div>
             )}

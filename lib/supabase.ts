@@ -163,3 +163,17 @@ export type DayInsight = {
   created_at: string
   updated_at: string
 }
+
+// Baza dnia (Faza 3.4): miasto/okolica, promień i kategorie wyszukiwania.
+// Współdzielone przez ekipę (realtime), per dzień.
+export type DayMeta = {
+  id: string
+  room_id: string
+  day_index: number
+  city: string
+  country: string
+  radius: number
+  categories: string[]
+  created_at: string
+  updated_at: string
+}

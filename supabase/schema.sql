@@ -89,6 +89,20 @@ CREATE TABLE IF NOT EXISTS day_insights (
   UNIQUE(room_id, day_index)
 );
 
+-- 7. DAY META — baza dnia (miasto/okolica, promień, kategorie) — Faza 3.4
+CREATE TABLE IF NOT EXISTS day_meta (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  day_index INTEGER NOT NULL DEFAULT 0,
+  city TEXT DEFAULT '',
+  country TEXT DEFAULT '',
+  radius INTEGER DEFAULT 40,
+  categories JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(room_id, day_index)
+);
+
 -- ============================================
 -- REALTIME — włącz dla wszystkich tabel
 -- ============================================
@@ -98,6 +112,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE packing_items;
 ALTER PUBLICATION supabase_realtime ADD TABLE saved_places;
 ALTER PUBLICATION supabase_realtime ADD TABLE itinerary_items;
 ALTER PUBLICATION supabase_realtime ADD TABLE day_insights;
+ALTER PUBLICATION supabase_realtime ADD TABLE day_meta;
 
 -- ============================================
 -- ROW LEVEL SECURITY — dostęp przez room_id
@@ -117,6 +132,8 @@ ALTER TABLE itinerary_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public_access_itinerary" ON itinerary_items FOR ALL USING (true) WITH CHECK (true);
 ALTER TABLE day_insights ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public_access_day_insights" ON day_insights FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE day_meta ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public_access_day_meta" ON day_meta FOR ALL USING (true) WITH CHECK (true);
 
 -- ============================================
 -- FUNKCJA — generowanie unikalnego kodu 6-znakowego

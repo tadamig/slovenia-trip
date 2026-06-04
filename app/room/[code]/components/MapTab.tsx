@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader'
-import { Room, UserPreference, SavedPlace, ItineraryItem, DayInsightPayload } from '@/lib/supabase'
+import { Room, UserPreference, SavedPlace, ItineraryItem, DayInsightPayload, DayMeta } from '@/lib/supabase'
 import { supabase } from '@/lib/supabase'
 import { getSessionId } from '@/lib/session'
 import { useItinerary } from './useItinerary'
@@ -15,6 +15,9 @@ interface Props {
 }
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
+
+// Kategorie wyszukiwania bazy dnia = dozwolone aktywności discover.
+const KNOWN_CATS = ['food', 'sightseeing', 'sup', 'trekking', 'sunset', 'relax', 'nightlife', 'markets', 'photo']
 
 function placeCoords(sp: SavedPlace): { lat: number; lon: number } | null {
   const c = sp.place_data?.coordinates
@@ -45,6 +48,7 @@ export default function MapTab({ room, myPrefs }: Props) {
   const routePolylineRef = useRef<google.maps.Polyline | null>(null)
   const stopMarkersRef = useRef<google.maps.Marker[]>([])
   const savedMarkersRef = useRef<google.maps.Marker[]>([])
+  const recMarkersRef = useRef<google.maps.Marker[]>([])
 
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
   const [mapReady, setMapReady] = useState(false)
@@ -59,10 +63,14 @@ export default function MapTab({ room, myPrefs }: Props) {
   const [insightsByDay, setInsightsByDay] = useState<Record<number, { signature: string; payload: DayInsightPayload }>>({})
   const [insightLoading, setInsightLoading] = useState(false)
 
-  // Polecajki w okolicy dnia (Faza 3.2) — auto w tle, cache po centroidzie.
+  // Baza dnia (Faza 3.4) — miasto/promień/kategorie, współdzielone (realtime).
+  const [dayMetaByDay, setDayMetaByDay] = useState<Record<number, DayMeta>>({})
+
+  // Eksploracja wokół bazy dnia — wyniki + współrzędne bazy, cache po kluczu.
   const [nearbyRaw, setNearbyRaw] = useState<NearbyRec[]>([])
   const [nearbyLoading, setNearbyLoading] = useState(false)
-  const nearbyCacheRef = useRef<Record<string, NearbyRec[]>>({})
+  const [anchorCoords, setAnchorCoords] = useState<{ lat: number; lon: number } | null>(null)
+  const nearbyCacheRef = useRef<Record<string, { recs: NearbyRec[]; anchor: { lat: number; lon: number } | null }>>({})
 
   const { items, addStop, removeStop, updateStop, moveWithinDay, moveToDay } = useItinerary(room.id, sessionId)
 
@@ -78,6 +86,22 @@ export default function MapTab({ room, myPrefs }: Props) {
     const channel = supabase
       .channel(`insights:${room.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_insights', filter: `room_id=eq.${room.id}` }, load)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [room.id])
+
+  // Wczytaj bazy dni (+ realtime).
+  useEffect(() => {
+    const load = () =>
+      supabase.from('day_meta').select('*').eq('room_id', room.id).then(({ data }) => {
+        const map: Record<number, DayMeta> = {}
+        ;(data || []).forEach((row: any) => { map[row.day_index] = row as DayMeta })
+        setDayMetaByDay(map)
+      })
+    load()
+    const channel = supabase
+      .channel(`daymeta:${room.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_meta', filter: `room_id=eq.${room.id}` }, load)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [room.id])
@@ -135,8 +159,10 @@ export default function MapTab({ room, myPrefs }: Props) {
       cancelled = true
       stopMarkersRef.current.forEach((m) => m.setMap(null))
       savedMarkersRef.current.forEach((m) => m.setMap(null))
+      recMarkersRef.current.forEach((m) => m.setMap(null))
       stopMarkersRef.current = []
       savedMarkersRef.current = []
+      recMarkersRef.current = []
       routePolylineRef.current?.setMap(null)
       routePolylineRef.current = null
       routeClassRef.current = null
@@ -293,20 +319,49 @@ export default function MapTab({ room, myPrefs }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insightLoading, dayItems, legs, selectedDay, room.id, room.start_date, room.end_city, myPrefs])
 
-  // Centroid wybranego dnia (do polecajek w okolicy).
-  const centroid = useMemo(() => {
-    const pts = dayItems.filter((it) => it.lat != null && it.lon != null)
-    if (!pts.length) return null
-    const lat = pts.reduce((s, it) => s + (it.lat as number), 0) / pts.length
-    const lon = pts.reduce((s, it) => s + (it.lon as number), 0) / pts.length
-    return { lat, lon }
-  }, [dayItems])
-  const nearbyKey = centroid ? `${centroid.lat.toFixed(2)},${centroid.lon.toFixed(2)}` : ''
+  // ——— Baza dnia (Faza 3.4): miasto, promień, kategorie ———
+  const defaultCats = useMemo(
+    () => ((myPrefs?.activities as string[]) || []).filter((a) => KNOWN_CATS.includes(a)),
+    [myPrefs],
+  )
+  const metaRow = dayMetaByDay[selectedDay]
+  const dayCity = metaRow?.city || ''
+  const dayCountry = metaRow?.country || ''
+  const dayRadius = metaRow?.radius || 40
+  const dayCategories = useMemo(
+    () => (metaRow?.categories?.length ? metaRow.categories : defaultCats),
+    [metaRow, defaultCats],
+  )
 
-  // Auto-pobieranie polecajek w okolicy (debounce + cache po centroidzie).
+  const saveMeta = useCallback(
+    async (patch: Partial<Pick<DayMeta, 'city' | 'country' | 'radius' | 'categories'>>) => {
+      const base = { city: dayCity, country: dayCountry, radius: dayRadius, categories: dayCategories }
+      const next = { ...base, ...patch }
+      setDayMetaByDay((prev) => ({
+        ...prev,
+        [selectedDay]: { ...(prev[selectedDay] || {}), room_id: room.id, day_index: selectedDay, ...next } as DayMeta,
+      }))
+      await supabase
+        .from('day_meta')
+        .upsert({ room_id: room.id, day_index: selectedDay, ...next, updated_at: new Date().toISOString() }, { onConflict: 'room_id,day_index' })
+    },
+    [dayCity, dayCountry, dayRadius, dayCategories, room.id, selectedDay],
+  )
+
+  const setDayCity = useCallback((city: string, country: string) => { saveMeta({ city, country }) }, [saveMeta])
+  const setDayRadius = useCallback((radius: number) => { saveMeta({ radius }) }, [saveMeta])
+  const toggleCategory = useCallback((cat: string) => {
+    const set = new Set(dayCategories)
+    set.has(cat) ? set.delete(cat) : set.add(cat)
+    saveMeta({ categories: Array.from(set) })
+  }, [dayCategories, saveMeta])
+
+  // Eksploracja wokół bazy dnia (discover po mieście + promieniu + kategoriach).
+  const exploreKey = dayCity ? `${dayCity}|${dayCountry}|r${dayRadius}|${[...dayCategories].sort().join(',')}` : ''
   useEffect(() => {
-    if (!centroid || !nearbyKey) { setNearbyRaw([]); return }
-    if (nearbyCacheRef.current[nearbyKey]) { setNearbyRaw(nearbyCacheRef.current[nearbyKey]); return }
+    if (!exploreKey || !dayCity) { setNearbyRaw([]); setAnchorCoords(null); return }
+    const cached = nearbyCacheRef.current[exploreKey]
+    if (cached) { setNearbyRaw(cached.recs); setAnchorCoords(cached.anchor); return }
     let cancelled = false
     const t = setTimeout(async () => {
       setNearbyLoading(true)
@@ -315,12 +370,10 @@ export default function MapTab({ room, myPrefs }: Props) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            baseCity: room.end_city || '',
-            country: room.country || '',
-            baseLat: centroid.lat,
-            baseLon: centroid.lon,
-            radius: 20,
-            activities: (myPrefs?.activities as string[]) || [],
+            baseCity: dayCity,
+            country: dayCountry,
+            radius: dayRadius,
+            activities: dayCategories,
             sort: 'match',
           }),
         })
@@ -333,25 +386,54 @@ export default function MapTab({ room, myPrefs }: Props) {
             tags: p.tags || [], openingHours: p.openingHours, googleRating: p.googleRating,
             distanceFromBase: p.distanceFromBase,
           }))
+        const anchor = typeof data.baseLat === 'number' && typeof data.baseLon === 'number'
+          ? { lat: data.baseLat, lon: data.baseLon } : null
         if (cancelled) return
-        nearbyCacheRef.current[nearbyKey] = recs
+        nearbyCacheRef.current[exploreKey] = { recs, anchor }
         setNearbyRaw(recs)
+        setAnchorCoords(anchor)
       } finally {
         if (!cancelled) setNearbyLoading(false)
       }
-    }, 700)
+    }, 600)
     return () => { cancelled = true; clearTimeout(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nearbyKey])
+  }, [exploreKey])
 
-  // Wyklucz to, co już jest w planie lub zapisane; pokaż maks. 6.
+  // Wyklucz to, co już jest w planie lub zapisane; pokaż maks. 8.
   const nearby = useMemo(() => {
     const names = new Set<string>()
     const ids = new Set<string>()
     items.forEach((it) => { names.add(it.place_name.toLowerCase()); if (it.place_id) ids.add(it.place_id) })
     savedPlaces.forEach((sp) => { names.add(sp.place_name.toLowerCase()); const pid = sp.place_data?.place_id; if (pid) ids.add(pid) })
-    return nearbyRaw.filter((r) => !ids.has(r.googlePlaceId) && !names.has(r.name.toLowerCase())).slice(0, 6)
+    return nearbyRaw.filter((r) => !ids.has(r.googlePlaceId) && !names.has(r.name.toLowerCase())).slice(0, 8)
   }, [nearbyRaw, items, savedPlaces])
+
+  // Markery polecajek (pomarańczowe) + centrowanie mapy na bazie pustego dnia.
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map || !mapReady) return
+    recMarkersRef.current.forEach((m) => m.setMap(null))
+    recMarkersRef.current = []
+    nearby.forEach((r) => {
+      const marker = new google.maps.Marker({
+        position: { lat: r.lat, lng: r.lon },
+        map,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: '#f59e0b', fillOpacity: 0.9, strokeColor: '#ffffff', strokeWeight: 1 },
+        title: r.name,
+        zIndex: 3,
+      })
+      recMarkersRef.current.push(marker)
+    })
+  }, [nearby, mapReady])
+
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map || !mapReady || dayItems.length > 0 || !anchorCoords) return
+    map.panTo({ lat: anchorCoords.lat, lng: anchorCoords.lon })
+    map.setZoom(10)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchorCoords, mapReady, dayItems.length])
 
   const addNearby = useCallback((rec: NearbyRec) => {
     addStop(selectedDay, {
@@ -407,6 +489,9 @@ export default function MapTab({ room, myPrefs }: Props) {
             <div className="flex items-center gap-2 text-xs text-stone-300">
               <div className="w-3 h-3 rounded-full bg-water-400" /> Zapisane
             </div>
+            <div className="flex items-center gap-2 text-xs text-stone-300">
+              <div className="w-3 h-3 rounded-full" style={{ background: '#f59e0b' }} /> Polecane
+            </div>
           </div>
         )}
       </div>
@@ -438,6 +523,12 @@ export default function MapTab({ room, myPrefs }: Props) {
           nearby={nearby}
           nearbyLoading={nearbyLoading}
           onAddNearby={addNearby}
+          dayCity={dayCity}
+          dayRadius={dayRadius}
+          dayCategories={dayCategories}
+          onSetCity={setDayCity}
+          onSetRadius={setDayRadius}
+          onToggleCategory={toggleCategory}
         />
       </div>
     </div>

@@ -10,6 +10,7 @@ import {
 } from './itineraryUtils'
 import {
   ChevronUp, ChevronDown, Trash2, Plus, Clock, MapPin, Ruler, AlertTriangle, X, Sparkles, Car, Lightbulb, RefreshCw,
+  Star, Info, ExternalLink,
 } from 'lucide-react'
 
 const ACTIVITY_TAGS: Record<string, string> = {
@@ -73,6 +74,13 @@ function savedToStop(sp: SavedPlace): NewStop {
   }
 }
 
+function navUrl(lat: number | null, lon: number | null, placeId: string | null): string {
+  if (lat == null || lon == null) return '#'
+  return placeId
+    ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&destination_place_id=${placeId}`
+    : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`
+}
+
 function openBadge(state: OpenState, line: string | null) {
   if (state === 'open') return <span className="text-emerald-400">🟢 otwarte · {line}</span>
   if (state === 'closed') return <span className="text-rose-400">🔴 {line || 'zamknięte'}</span>
@@ -89,6 +97,13 @@ export default function DayPlanner({
 }: Props) {
   const [picker, setPicker] = useState(false)
   const [weather, setWeather] = useState<DayWeather | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
 
   const dayDate = dateForDay(startDate, selectedDay)
 
@@ -242,15 +257,18 @@ export default function DayPlanner({
                       >
                         {i + 1}
                       </button>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-stone-100 text-sm font-medium truncate">{it.place_name}</p>
+                      <button onClick={() => toggleExpand(it.id)} className="flex-1 min-w-0 text-left">
+                        <p className="text-stone-100 text-sm font-medium truncate flex items-center gap-1">
+                          {it.place_name}
+                          <Info className="w-3 h-3 text-stone-500 flex-shrink-0" />
+                        </p>
                         {(it.tags as string[])?.length > 0 && (
                           <p className="text-stone-500 text-xs truncate">
                             {(it.tags as string[]).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
                           </p>
                         )}
                         <p className="text-xs mt-0.5">{openBadge(openState, line)}</p>
-                      </div>
+                      </button>
                       {/* Reorder + usuń */}
                       <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
                         <button
@@ -313,6 +331,49 @@ export default function DayPlanner({
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
+
+                    {/* Rozwinięte szczegóły miejsca (Faza 3.3) */}
+                    {expanded.has(it.id) && (() => {
+                      const sp = savedPlaces.find((s) => s.id === it.saved_place_id)
+                      const pd = sp?.place_data
+                      const rating = pd?.google_rating
+                      const desc = pd?.description
+                      const address = pd?.address
+                      const aiTip = insight?.briefing?.stops.find((s) => s.name.toLowerCase() === it.place_name.toLowerCase())?.tip
+                      const hours = (it.opening_hours as string[] | null) || pd?.opening_hours || null
+                      return (
+                        <div className="mt-2 pt-2 border-t border-stone-700/40 space-y-1.5 text-xs">
+                          {(rating || address) && (
+                            <p className="text-stone-400 flex items-center gap-2 flex-wrap">
+                              {rating && <span className="flex items-center gap-0.5 text-amber-400"><Star className="w-3 h-3" /> {rating}</span>}
+                              {address && <span className="truncate">{address}</span>}
+                            </p>
+                          )}
+                          {desc && <p className="text-stone-400 leading-relaxed">{desc}</p>}
+                          {aiTip && (
+                            <p className="text-stone-300 flex gap-1.5">
+                              <Lightbulb className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" /> <span>{aiTip}</span>
+                            </p>
+                          )}
+                          {hours && hours.length > 0 && (
+                            <div className="text-stone-500">
+                              <p className="text-stone-400 font-medium mb-0.5">Godziny otwarcia:</p>
+                              {hours.map((h, k) => <p key={k} className="leading-tight">{h}</p>)}
+                            </div>
+                          )}
+                          {it.lat != null && it.lon != null && (
+                            <a
+                              href={navUrl(it.lat, it.lon, it.place_id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-water-400 hover:text-water-300 font-medium"
+                            >
+                              <ExternalLink className="w-3 h-3" /> Nawiguj w Google Maps
+                            </a>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Odcinek do następnego przystanku */}

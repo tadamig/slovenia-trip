@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader'
-import { Room, UserPreference, SavedPlace, ItineraryItem } from '@/lib/supabase'
+import { Room, UserPreference, SavedPlace, ItineraryItem, DayInsightPayload } from '@/lib/supabase'
 import { supabase } from '@/lib/supabase'
 import { getSessionId } from '@/lib/session'
 import { useItinerary } from './useItinerary'
-import { tripDayCount } from './itineraryUtils'
+import { tripDayCount, dateForDay, openingLineForDate, fetchDayWeather } from './itineraryUtils'
 import DayPlanner, { Leg } from './DayPlanner'
 
 interface Props {
@@ -31,7 +31,12 @@ function fmtKm(m: number): string {
   return km >= 10 ? `${Math.round(km)} km` : `${km.toFixed(1)} km`
 }
 
-export default function MapTab({ room }: Props) {
+// Podpis składu dnia — gdy się zmieni, analiza AI jest nieaktualna.
+function daySignature(items: ItineraryItem[]): string {
+  return items.map((it) => `${it.id}:${it.lat},${it.lon}:${it.duration_min}:${it.start_time || ''}`).join('|')
+}
+
+export default function MapTab({ room, myPrefs }: Props) {
   const sessionId = typeof window !== 'undefined' ? getSessionId() : ''
 
   const mapRef = useRef<HTMLDivElement>(null)
@@ -50,7 +55,27 @@ export default function MapTab({ room }: Props) {
   const [legs, setLegs] = useState<Leg[]>([])
   const [routeLoading, setRouteLoading] = useState(false)
 
+  // Analiza dnia (Faza 3) — cache w day_insights, współdzielony przez ekipę.
+  const [insightsByDay, setInsightsByDay] = useState<Record<number, { signature: string; payload: DayInsightPayload }>>({})
+  const [insightLoading, setInsightLoading] = useState(false)
+
   const { items, addStop, removeStop, updateStop, moveWithinDay, moveToDay } = useItinerary(room.id, sessionId)
+
+  // Wczytaj zapisane analizy dni (+ realtime).
+  useEffect(() => {
+    const load = () =>
+      supabase.from('day_insights').select('*').eq('room_id', room.id).then(({ data }) => {
+        const map: Record<number, { signature: string; payload: DayInsightPayload }> = {}
+        ;(data || []).forEach((row: any) => { map[row.day_index] = { signature: row.signature, payload: row.payload } })
+        setInsightsByDay(map)
+      })
+    load()
+    const channel = supabase
+      .channel(`insights:${room.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_insights', filter: `room_id=eq.${room.id}` }, load)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [room.id])
 
   // Zapisane miejsca ekipy (+ realtime, żeby picker był aktualny).
   useEffect(() => {
@@ -217,6 +242,52 @@ export default function MapTab({ room }: Props) {
     map.setZoom(12)
   }, [])
 
+  // Bieżąca analiza dnia + czy jest aktualna względem składu dnia.
+  const currentSig = daySignature(dayItems)
+  const dayInsight = insightsByDay[selectedDay]
+  const insightFresh = !!dayInsight && dayInsight.signature === currentSig
+
+  const analyzeDay = useCallback(async () => {
+    if (insightLoading || dayItems.length === 0) return
+    setInsightLoading(true)
+    try {
+      const dayDate = dateForDay(room.start_date, selectedDay)
+      const first = dayItems.find((it) => it.lat != null && it.lon != null)
+      let weather = null
+      if (first && dayDate) weather = await fetchDayWeather(first.lat!, first.lon!, dayDate)
+
+      const res = await fetch('/api/day-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stops: dayItems.map((it) => ({
+            name: it.place_name,
+            lat: it.lat,
+            lon: it.lon,
+            openingLine: openingLineForDate(it.opening_hours, dayDate),
+            durationMin: it.duration_min,
+          })),
+          legs,
+          weather,
+          activities: (myPrefs?.activities as string[]) || [],
+          date: dayDate ? dayDate.toISOString().split('T')[0] : '',
+          cityHint: room.end_city || '',
+        }),
+      })
+      if (!res.ok) return
+      const payload: DayInsightPayload = await res.json()
+      const signature = daySignature(dayItems)
+      // Zapis do cache (współdzielony) — realtime zaktualizuje stan.
+      await supabase
+        .from('day_insights')
+        .upsert({ room_id: room.id, day_index: selectedDay, signature, payload, updated_at: new Date().toISOString() }, { onConflict: 'room_id,day_index' })
+      setInsightsByDay((prev) => ({ ...prev, [selectedDay]: { signature, payload } }))
+    } finally {
+      setInsightLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insightLoading, dayItems, legs, selectedDay, room.id, room.start_date, room.end_city, myPrefs])
+
   const handleAddDay = () => { setExtraDays((v) => v + 1); setSelectedDay(days) }
   const handleRemoveDay = (d: number) => {
     setExtraDays((v) => Math.max(0, v - 1))
@@ -284,6 +355,10 @@ export default function MapTab({ room }: Props) {
           onMoveToDay={moveToDay}
           onUpdateStop={updateStop}
           onFocusPlace={focusPlace}
+          insight={dayInsight?.payload || null}
+          insightFresh={insightFresh}
+          insightLoading={insightLoading}
+          onAnalyze={analyzeDay}
         />
       </div>
     </div>

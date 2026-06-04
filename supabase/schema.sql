@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS itinerary_items (
 );
 CREATE INDEX IF NOT EXISTS itinerary_items_room_day_idx ON itinerary_items (room_id, day_index, position);
 
+-- 6. DAY INSIGHTS — analiza AI dnia (brief + parking), cache współdzielony (Faza 3)
+CREATE TABLE IF NOT EXISTS day_insights (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  day_index INTEGER NOT NULL DEFAULT 0,
+  signature TEXT NOT NULL DEFAULT '',     -- podpis składu dnia (gdy się zmieni → przelicz)
+  payload JSONB NOT NULL DEFAULT '{}',    -- { briefing, parking, generatedAt }
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(room_id, day_index)
+);
+
 -- ============================================
 -- REALTIME — włącz dla wszystkich tabel
 -- ============================================
@@ -85,6 +97,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE user_preferences;
 ALTER PUBLICATION supabase_realtime ADD TABLE packing_items;
 ALTER PUBLICATION supabase_realtime ADD TABLE saved_places;
 ALTER PUBLICATION supabase_realtime ADD TABLE itinerary_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE day_insights;
 
 -- ============================================
 -- ROW LEVEL SECURITY — dostęp przez room_id
@@ -102,6 +115,8 @@ CREATE POLICY "public_access_packing" ON packing_items FOR ALL USING (true) WITH
 CREATE POLICY "public_access_places" ON saved_places FOR ALL USING (true) WITH CHECK (true);
 ALTER TABLE itinerary_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "public_access_itinerary" ON itinerary_items FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE day_insights ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public_access_day_insights" ON day_insights FOR ALL USING (true) WITH CHECK (true);
 
 -- ============================================
 -- FUNKCJA — generowanie unikalnego kodu 6-znakowego

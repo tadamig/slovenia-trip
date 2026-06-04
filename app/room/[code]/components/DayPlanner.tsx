@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ItineraryItem, SavedPlace } from '@/lib/supabase'
+import { ItineraryItem, SavedPlace, DayInsightPayload } from '@/lib/supabase'
 import { NewStop } from './useItinerary'
 import {
   dateForDay, formatDayDate, openingLineForDate, isOpenAt, OpenState,
@@ -9,7 +9,7 @@ import {
   fetchDayWeather, weatherEmoji, weatherHint, DayWeather,
 } from './itineraryUtils'
 import {
-  ChevronUp, ChevronDown, Trash2, Plus, Clock, MapPin, Ruler, AlertTriangle, X,
+  ChevronUp, ChevronDown, Trash2, Plus, Clock, MapPin, Ruler, AlertTriangle, X, Sparkles, Car, Lightbulb, RefreshCw,
 } from 'lucide-react'
 
 const ACTIVITY_TAGS: Record<string, string> = {
@@ -39,6 +39,10 @@ interface Props {
   onMoveToDay: (id: string, dayIndex: number) => void
   onUpdateStop: (id: string, patch: Partial<Pick<ItineraryItem, 'duration_min' | 'start_time'>>) => void
   onFocusPlace: (lat: number, lon: number) => void
+  insight: DayInsightPayload | null
+  insightFresh: boolean
+  insightLoading: boolean
+  onAnalyze: () => void
 }
 
 function savedToStop(sp: SavedPlace): NewStop {
@@ -65,6 +69,7 @@ export default function DayPlanner({
   startDate, days, selectedDay, onSelectDay, onAddDay, onRemoveDay, dayCounts,
   dayItems, legs, routeLoading, savedPlaces,
   onAddStop, onRemoveStop, onMoveWithinDay, onMoveToDay, onUpdateStop, onFocusPlace,
+  insight, insightFresh, insightLoading, onAnalyze,
 }: Props) {
   const [picker, setPicker] = useState(false)
   const [weather, setWeather] = useState<DayWeather | null>(null)
@@ -313,6 +318,105 @@ export default function DayPlanner({
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* Analiza dnia (AI + parking) */}
+        {dayItems.length > 0 && (
+          <div className="mt-3">
+            <button
+              onClick={onAnalyze}
+              disabled={insightLoading}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-r from-forest-700/40 to-water-700/40 border border-water-700/40 text-water-200 text-sm font-medium hover:border-water-500/60 transition-all disabled:opacity-60"
+            >
+              {insightLoading ? (
+                <><RefreshCw className="w-4 h-4 animate-spin" /> Analizuję dzień…</>
+              ) : insight ? (
+                insightFresh ? <><RefreshCw className="w-4 h-4" /> Odśwież analizę dnia</> : <><RefreshCw className="w-4 h-4" /> Plan się zmienił — przelicz analizę</>
+              ) : (
+                <><Sparkles className="w-4 h-4" /> Analiza dnia (AI + parking)</>
+              )}
+            </button>
+
+            {insight && (
+              <div className="mt-2 bg-stone-800/50 border border-stone-700/40 rounded-xl p-3 space-y-3">
+                {!insightFresh && (
+                  <p className="text-amber-400/90 text-xs flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Analiza dla wcześniejszej wersji dnia — kliknij „przelicz”.
+                  </p>
+                )}
+
+                {insight.briefing ? (
+                  <>
+                    {insight.briefing.summary && (
+                      <p className="text-stone-200 text-sm leading-relaxed">{insight.briefing.summary}</p>
+                    )}
+                    {insight.briefing.timing && (
+                      <p className="text-stone-300 text-xs flex gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-water-400 flex-shrink-0 mt-0.5" /> <span>{insight.briefing.timing}</span>
+                      </p>
+                    )}
+                    {insight.briefing.feasibility && (
+                      <p className="text-stone-300 text-xs flex gap-1.5">
+                        <Lightbulb className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" /> <span>{insight.briefing.feasibility}</span>
+                      </p>
+                    )}
+                    {insight.briefing.weather && (
+                      <p className="text-stone-400 text-xs">🌦️ {insight.briefing.weather}</p>
+                    )}
+
+                    {/* Per przystanek: tip + parking */}
+                    {insight.briefing.stops.length > 0 && (
+                      <div className="space-y-2 pt-1 border-t border-stone-700/40">
+                        {insight.briefing.stops.map((s, i) => {
+                          const gp = insight.parking[i]?.spots || []
+                          return (
+                            <div key={i} className="text-xs">
+                              <p className="text-stone-200 font-medium">{i + 1}. {s.name}</p>
+                              {s.tip && <p className="text-stone-400 mt-0.5">{s.tip}</p>}
+                              {s.parking && (
+                                <p className="text-stone-300 mt-0.5 flex gap-1.5">
+                                  <Car className="w-3.5 h-3.5 text-forest-400 flex-shrink-0 mt-0.5" /> <span>{s.parking}</span>
+                                </p>
+                              )}
+                              {gp.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {gp.map((p, j) => (
+                                    <span key={j} className="text-[11px] bg-stone-900/60 border border-stone-700/40 rounded-full px-2 py-0.5 text-stone-400">
+                                      🅿️ {p.name}{p.distanceM != null ? ` · ${p.distanceM} m` : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-stone-400 text-xs">AI chwilowo niedostępne — poniżej same znalezione parkingi.</p>
+                )}
+
+                {/* Gdy brak briefu AI, pokaż przynajmniej parkingi z Google */}
+                {!insight.briefing && insight.parking.some((p) => p.spots.length > 0) && (
+                  <div className="space-y-1.5">
+                    {insight.parking.map((p, i) => p.spots.length > 0 && (
+                      <div key={i} className="text-xs">
+                        <p className="text-stone-300">{p.stop}</p>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {p.spots.map((s, j) => (
+                            <span key={j} className="text-[11px] bg-stone-900/60 border border-stone-700/40 rounded-full px-2 py-0.5 text-stone-400">
+                              🅿️ {s.name}{s.distanceM != null ? ` · ${s.distanceM} m` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

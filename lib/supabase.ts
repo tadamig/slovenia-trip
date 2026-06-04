@@ -131,3 +131,35 @@ export type PlaceNote = {
   text: string
   created_at: string
 }
+
+// ——— INTELIGENCJA DNIA (Faza 3) ———
+// Analiza AI (DeepSeek) + parking (Google Nearby + Brave) dla dnia planera.
+// Liczona na żądanie, cache'owana i współdzielona przez ekipę (realtime).
+export type DayBriefing = {
+  summary: string
+  timing: string
+  feasibility: string
+  stops: { name: string; tip: string; parking: string }[]
+  weather: string | null
+}
+
+export type DayParking = {
+  stop: string
+  spots: { name: string; vicinity: string; distanceM: number | null }[]
+}
+
+export type DayInsightPayload = {
+  briefing: DayBriefing | null
+  parking: DayParking[]
+  generatedAt: string
+}
+
+export type DayInsight = {
+  id: string
+  room_id: string
+  day_index: number
+  signature: string
+  payload: DayInsightPayload
+  created_at: string
+  updated_at: string
+}

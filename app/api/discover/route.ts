@@ -170,6 +170,24 @@ function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): num
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+// Typy Google → konkretne kategorie (Faza 3.5). Pozwala dopasować miejsce
+// z bazy blogów (curated_places) do wybranych przez usera typów.
+function googleTypesToCats(types: string[]): string[] {
+  const out = new Set<string>()
+  const has = (v: string) => types.includes(v)
+  if (has('cafe')) out.add('cafe')
+  if (has('bakery')) out.add('bakery')
+  if (has('restaurant')) out.add('restaurant')
+  if (has('meal_takeaway') || has('meal_delivery')) out.add('streetfood')
+  if (has('bar') || has('night_club')) out.add('bar')
+  if (has('museum') || has('art_gallery')) out.add('museum')
+  if (has('tourist_attraction') || has('church') || has('place_of_worship') || has('city_hall')) out.add('landmark')
+  if (has('park')) { out.add('park'); out.add('trekking') }
+  if (has('natural_feature')) { out.add('water'); out.add('viewpoint'); out.add('trekking') }
+  if (has('campground') || has('rv_park')) out.add('trekking')
+  return Array.from(out)
+}
+
 function googleTypesToTags(types: string[]): string[] {
   const tags: string[] = []
   const has = (v: string) => types.includes(v)
@@ -431,7 +449,7 @@ function sortPlaces(list: DiscoverPlace[], sort: SortMode): DiscoverPlace[] {
 function buildCacheKey(p: { baseCity: string; country: string; radius: number; activities: string[]; categories?: string[] }): string {
   const acts = p.activities.slice().sort().join(',')
   const cats = (p.categories || []).slice().sort().join(',')
-  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}${cats ? `|c2:${cats}` : ''}`
+  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}${cats ? `|c3:${cats}` : ''}`
 }
 
 async function readCache(key: string): Promise<{ places: DiscoverPlace[]; shops?: unknown[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
@@ -562,10 +580,12 @@ export async function POST(request: NextRequest) {
     if (!payloadPromise) {
       payloadPromise = (async (): Promise<DiscoverPayload> => {
     // Layer 0 (baza wiedzy z blogów) + Layer 1 (kuracja DeepSeek) — równolegle.
-    // W trybie konkretnych typów (planer dnia) pomijamy warstwę kuracji/AI —
-    // szukamy WYŁĄCZNIE po wybranych typach, żeby wyniki w 100% pasowały do wyboru.
+    // Warstwa 0 (blogi → curated_places) działa zawsze — w trybie konkretnych
+    // typów filtrujemy ją niżej po typach Google do wybranych kategorii.
+    // Warstwa 1 (AI-kuracja DeepSeek) tylko w trybie szerokim, by w trybie
+    // konkretnych typów nie wciskała miejsc spoza wyboru.
     const [curatedRows, curated] = categories.length
-      ? [[] as Awaited<ReturnType<typeof readCuratedPlaces>>, [] as Awaited<ReturnType<typeof curate>>]
+      ? [await readCuratedPlaces(country, effActivities), [] as Awaited<ReturnType<typeof curate>>]
       : await Promise.all([
           readCuratedPlaces(country, effActivities),
           curate({
@@ -637,9 +657,16 @@ export async function POST(request: NextRequest) {
       if (!row.google_place_id || typeof row.lat !== 'number' || typeof row.lon !== 'number') continue
       const distance = Math.round(distanceKm(lat!, lon!, row.lat, row.lon))
       if (distance > radius) continue
+      // Tryb konkretnych typów: seeduj blogowe miejsce tylko gdy jego typy Google
+      // pasują do wybranych kategorii; w przeciwnym razie pomiń (brak pollucji).
+      let seedCats: string[] = []
+      if (categories.length) {
+        seedCats = googleTypesToCats(row.types || []).filter((c) => categories.includes(c))
+        if (!seedCats.length) continue
+      }
       const rowActs = (row.activities || []).filter((a) => KNOWN_ACTIVITIES.has(a))
       const matched = rowActs.filter((a) => effActivities.includes(a))
-      const tags = rowActs.length ? rowActs : ['sightseeing']
+      const tags = categories.length ? seedCats : (rowActs.length ? rowActs : ['sightseeing'])
       byId.set(row.google_place_id, {
         name: row.name,
         googlePlaceId: row.google_place_id,
@@ -657,7 +684,7 @@ export async function POST(request: NextRequest) {
         isOpen: null,
         curated: true,
         matchedActivities: matched.length ? matched : (rowActs[0] ? [rowActs[0]] : []),
-        matchedCategories: [],
+        matchedCategories: seedCats,
         score: 0,
         sources: Array.isArray(row.sources) ? row.sources.map((s) => ({ url: s.url, title: s.title })) : [],
         mentionCount: row.mention_count ?? (Array.isArray(row.sources) ? row.sources.length : 0),

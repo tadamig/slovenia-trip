@@ -51,6 +51,7 @@ type DiscoverPlace = {
   recentReviewHighlights?: string[]
   curated: boolean
   matchedActivities: string[]
+  matchedCategories: string[]   // konkretne typy (Faza 3.5), które trafiły to miejsce
   score: number
   sources?: { url: string; title: string }[]
   mentionCount?: number
@@ -430,7 +431,7 @@ function sortPlaces(list: DiscoverPlace[], sort: SortMode): DiscoverPlace[] {
 function buildCacheKey(p: { baseCity: string; country: string; radius: number; activities: string[]; categories?: string[] }): string {
   const acts = p.activities.slice().sort().join(',')
   const cats = (p.categories || []).slice().sort().join(',')
-  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}${cats ? `|c:${cats}` : ''}`
+  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}${cats ? `|c2:${cats}` : ''}`
 }
 
 async function readCache(key: string): Promise<{ places: DiscoverPlace[]; shops?: unknown[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
@@ -561,19 +562,23 @@ export async function POST(request: NextRequest) {
     if (!payloadPromise) {
       payloadPromise = (async (): Promise<DiscoverPayload> => {
     // Layer 0 (baza wiedzy z blogów) + Layer 1 (kuracja DeepSeek) — równolegle.
-    const [curatedRows, curated] = await Promise.all([
-      readCuratedPlaces(country, effActivities),
-      curate({
-        baseCity, country, radius,
-        activities: effActivities,
-        intensity: body.intensity,
-        numPeople: body.numPeople,
-      }),
-    ])
+    // W trybie konkretnych typów (planer dnia) pomijamy warstwę kuracji/AI —
+    // szukamy WYŁĄCZNIE po wybranych typach, żeby wyniki w 100% pasowały do wyboru.
+    const [curatedRows, curated] = categories.length
+      ? [[] as Awaited<ReturnType<typeof readCuratedPlaces>>, [] as Awaited<ReturnType<typeof curate>>]
+      : await Promise.all([
+          readCuratedPlaces(country, effActivities),
+          curate({
+            baseCity, country, radius,
+            activities: effActivities,
+            intensity: body.intensity,
+            numPeople: body.numPeople,
+          }),
+        ])
 
     // Layer 2: zbuduj listę zapytań textsearch
     // (a) skuratowane nazwy + (b) zapytania destynacyjne per aktywność
-    type Query = { q: string; activity: string | null; curated: boolean }
+    type Query = { q: string; activity: string | null; curated: boolean; category?: string | null }
     const queries: Query[] = []
     for (const c of curated) {
       queries.push({ q: `${c.name} ${c.area || ''} ${country}`.trim(), activity: c.activity, curated: true })
@@ -583,7 +588,7 @@ export async function POST(request: NextRequest) {
       for (const cat of categories) {
         const templates = POI_QUERIES[cat] || []
         for (const t of templates.slice(0, 2)) {
-          queries.push({ q: `${t} near ${baseCity || country}`, activity: CAT_TO_ACTIVITY[cat] || null, curated: false })
+          queries.push({ q: `${t} near ${baseCity || country}`, activity: CAT_TO_ACTIVITY[cat] || null, curated: false, category: cat })
         }
       }
     } else {
@@ -614,9 +619,12 @@ export async function POST(request: NextRequest) {
     // zwraca z RÓŻNYMI place_id z różnych zapytań (Ljubljanica), inaczej klonuje się.
     const byName = new Map<string, string>()
     const normName = (n: string) => n.toLowerCase().replace(/\s+/g, ' ').trim()
-    const mergeInto = (place: DiscoverPlace, query: { activity: string | null; curated: boolean }) => {
+    const mergeInto = (place: DiscoverPlace, query: { activity: string | null; curated: boolean; category?: string | null }) => {
       if (query.activity && !place.matchedActivities.includes(query.activity)) {
         place.matchedActivities.push(query.activity)
+      }
+      if (query.category && !place.matchedCategories.includes(query.category)) {
+        place.matchedCategories.push(query.category)
       }
       if (query.curated) place.curated = true
     }
@@ -649,6 +657,7 @@ export async function POST(request: NextRequest) {
         isOpen: null,
         curated: true,
         matchedActivities: matched.length ? matched : (rowActs[0] ? [rowActs[0]] : []),
+        matchedCategories: [],
         score: 0,
         sources: Array.isArray(row.sources) ? row.sources.map((s) => ({ url: s.url, title: s.title })) : [],
         mentionCount: row.mention_count ?? (Array.isArray(row.sources) ? row.sources.length : 0),
@@ -739,9 +748,20 @@ export async function POST(request: NextRequest) {
           isOpen: r.opening_hours?.open_now ?? null,
           curated: query.curated,
           matchedActivities: matched,
+          matchedCategories: query.category ? [query.category] : [],
           score: 0,
         })
         if (nameKey) byName.set(nameKey, r.place_id)
+      }
+    }
+
+    // Faza 3.5: w trybie konkretnych typów pokaż na karcie WYBRANE kategorie
+    // (np. „Kawa", „Bary"), a nie szerokie tagi z typów Google. Każde miejsce
+    // trafił któryś z wybranych typów (matchedCategories), więc tag jest zgodny.
+    if (categories.length) {
+      for (const p of Array.from(byId.values())) {
+        const cats = Array.from(new Set(p.matchedCategories))
+        if (cats.length) p.tags = cats
       }
     }
 

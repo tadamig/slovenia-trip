@@ -39,6 +39,9 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: 'photo', label: '📸 Foto' },
 ]
 
+// Etykiety konkretnych typów (do tagów na karcie polecajki).
+const CAT_LABEL: Record<string, string> = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label]))
+
 // Licznik opinii → zwięzły zapis (3,5k).
 function fmtCount(n?: number): string {
   if (!n) return ''
@@ -311,7 +314,7 @@ export default function DayPlanner({
                         </p>
                         {(it.tags as string[])?.length > 0 && (
                           <p className="text-stone-500 text-xs truncate">
-                            {(it.tags as string[]).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
+                            {(it.tags as string[]).map((t) => CAT_LABEL[t] || ACTIVITY_TAGS[t] || t).join(' · ')}
                           </p>
                         )}
                         <p className="text-xs mt-0.5">{openBadge(openState, line)}</p>
@@ -527,7 +530,7 @@ export default function DayPlanner({
                                   <span className="text-[10px] text-stone-400 bg-stone-900/50 border border-stone-700/40 rounded-full px-1.5 py-0.5">wspomniany {r.mentionCount}×</span>
                                 ) : null}
                                 {(r.tags || []).slice(0, 3).map((t) => (
-                                  <span key={t} className="text-[10px] text-stone-400 bg-stone-900/50 border border-stone-700/40 rounded-full px-1.5 py-0.5">{ACTIVITY_TAGS[t] || t}</span>
+                                  <span key={t} className="text-[10px] text-stone-400 bg-stone-900/50 border border-stone-700/40 rounded-full px-1.5 py-0.5">{CAT_LABEL[t] || ACTIVITY_TAGS[t] || t}</span>
                                 ))}
                               </div>
                             </div>
@@ -547,7 +550,7 @@ export default function DayPlanner({
                               {r.recentReviewHighlights?.length ? (
                                 <div className="space-y-1">
                                   {r.recentReviewHighlights.slice(0, 2).map((h, k) => (
-                                    <p key={k} className="text-stone-400 italic">„{h}”</p>
+                                    <p key={k} className="text-stone-400 italic">{h}</p>
                                   ))}
                                 </div>
                               ) : null}
@@ -713,7 +716,7 @@ export default function DayPlanner({
                     <div className="flex-1 min-w-0">
                       <p className="text-stone-200 text-xs font-medium truncate">{sp.place_name}</p>
                       <p className="text-stone-500 text-[11px] truncate">
-                        {((sp.tags as string[]) || []).map((t) => ACTIVITY_TAGS[t] || t).join(' · ') || 'Zapisane miejsce'}
+                        {((sp.tags as string[]) || []).map((t) => CAT_LABEL[t] || ACTIVITY_TAGS[t] || t).join(' · ') || 'Zapisane miejsce'}
                       </p>
                     </div>
                     <Plus className="w-4 h-4 text-stone-500 flex-shrink-0" />

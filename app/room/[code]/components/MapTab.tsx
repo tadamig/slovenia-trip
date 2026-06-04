@@ -16,8 +16,24 @@ interface Props {
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 
-// Kategorie wyszukiwania bazy dnia = dozwolone aktywności discover.
-const KNOWN_CATS = ['food', 'sightseeing', 'sup', 'trekking', 'sunset', 'relax', 'nightlife', 'markets', 'photo']
+// Konkretne typy miejsc bazy dnia (Faza 3.5) — zgodne z POI_QUERIES w /api/discover.
+const KNOWN_CATS = [
+  'restaurant', 'cafe', 'bakery', 'bar', 'icecream', 'streetfood',
+  'landmark', 'museum', 'park', 'viewpoint', 'water', 'trekking', 'markets', 'photo',
+]
+
+// Mapowanie szerokich preferencji ekipy → konkretne typy (domyślne zaznaczenie).
+const PREF_TO_CATS: Record<string, string[]> = {
+  food: ['restaurant', 'cafe'],
+  sightseeing: ['landmark', 'museum'],
+  sup: ['water'],
+  trekking: ['trekking'],
+  markets: ['markets'],
+  nightlife: ['bar'],
+  relax: ['park'],
+  sunset: ['viewpoint'],
+  photo: ['photo'],
+}
 
 function placeCoords(sp: SavedPlace): { lat: number; lon: number } | null {
   const c = sp.place_data?.coordinates
@@ -320,10 +336,11 @@ export default function MapTab({ room, myPrefs }: Props) {
   }, [insightLoading, dayItems, legs, selectedDay, room.id, room.start_date, room.end_city, myPrefs])
 
   // ——— Baza dnia (Faza 3.4): miasto, promień, kategorie ———
-  const defaultCats = useMemo(
-    () => ((myPrefs?.activities as string[]) || []).filter((a) => KNOWN_CATS.includes(a)),
-    [myPrefs],
-  )
+  const defaultCats = useMemo(() => {
+    const out = new Set<string>()
+    ;((myPrefs?.activities as string[]) || []).forEach((a) => (PREF_TO_CATS[a] || []).forEach((c) => out.add(c)))
+    return out.size ? Array.from(out) : ['restaurant', 'landmark']
+  }, [myPrefs])
   const metaRow = dayMetaByDay[selectedDay]
   const dayCity = metaRow?.city || ''
   const dayCountry = metaRow?.country || ''
@@ -373,7 +390,7 @@ export default function MapTab({ room, myPrefs }: Props) {
             baseCity: dayCity,
             country: dayCountry,
             radius: dayRadius,
-            activities: dayCategories,
+            categories: dayCategories,
             sort: 'match',
           }),
         })
@@ -384,7 +401,10 @@ export default function MapTab({ room, myPrefs }: Props) {
           .map((p: any) => ({
             name: p.name, googlePlaceId: p.googlePlaceId, lat: p.lat, lon: p.lon,
             tags: p.tags || [], openingHours: p.openingHours, googleRating: p.googleRating,
-            distanceFromBase: p.distanceFromBase,
+            googleTotalRatings: p.googleTotalRatings, distanceFromBase: p.distanceFromBase,
+            recentReviewHighlights: p.recentReviewHighlights, sources: p.sources,
+            mentionCount: p.mentionCount, isOpen: p.isOpen, website: p.website,
+            address: p.address, curated: p.curated,
           }))
         const anchor = typeof data.baseLat === 'number' && typeof data.baseLon === 'number'
           ? { lat: data.baseLat, lon: data.baseLon } : null

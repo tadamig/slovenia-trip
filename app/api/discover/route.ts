@@ -82,6 +82,32 @@ const ACTIVITY_DEST_QUERIES: Record<string, string[]> = {
   petfriendly: ['dog friendly cafe', 'pet friendly park trail'],
 }
 
+// Konkretne typy miejsc (planer dnia, Faza 3.5) — precyzyjne zapytania textsearch.
+// Pozwalają wybrać dokładnie „kawa / cukiernia / bary" zamiast szerokiej kategorii.
+const POI_QUERIES: Record<string, string[]> = {
+  restaurant: ['best traditional restaurant', 'top rated local restaurant'],
+  cafe: ['specialty coffee shop', 'best cafe coffee'],
+  bakery: ['patisserie cake shop', 'bakery dessert pastry'],
+  bar: ['cocktail bar', 'popular bar pub'],
+  icecream: ['gelato ice cream', 'best ice cream'],
+  streetfood: ['street food spot', 'food hall street food'],
+  landmark: ['historic landmark', 'old town must see attraction'],
+  museum: ['museum', 'art gallery'],
+  park: ['city park garden', 'nature reserve park'],
+  viewpoint: ['panoramic viewpoint', 'scenic lookout'],
+  water: ['lake to swim', 'beach natural swimming spot'],
+  trekking: ['hiking trail', 'gorge waterfall trail'],
+  markets: ['tržnica farmers market', 'market hall local market'],
+  photo: ['scenic photo spot', 'most photogenic viewpoint'],
+}
+
+// Konkretny typ → szeroka aktywność (do kuracji, scoringu, tagów, logowania).
+const CAT_TO_ACTIVITY: Record<string, string> = {
+  restaurant: 'food', cafe: 'food', bakery: 'food', bar: 'nightlife', icecream: 'food',
+  streetfood: 'food', landmark: 'sightseeing', museum: 'sightseeing', park: 'trekking',
+  viewpoint: 'sunset', water: 'sup', trekking: 'trekking', markets: 'markets', photo: 'photo',
+}
+
 // Typy Google, które są usługami/sklepami — nie chcemy ich jako "atrakcji"
 const EXCLUDE_TYPES = new Set([
   'car_rental', 'car_repair', 'car_dealer', 'bicycle_store', 'store',
@@ -401,9 +427,10 @@ function sortPlaces(list: DiscoverPlace[], sort: SortMode): DiscoverPlace[] {
 // ——————————————————————————————————————————————
 // Cache (Supabase) — klucz pomija "sort" (sortowanie aplikujemy przy odczycie)
 // ——————————————————————————————————————————————
-function buildCacheKey(p: { baseCity: string; country: string; radius: number; activities: string[] }): string {
+function buildCacheKey(p: { baseCity: string; country: string; radius: number; activities: string[]; categories?: string[] }): string {
   const acts = p.activities.slice().sort().join(',')
-  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}`
+  const cats = (p.categories || []).slice().sort().join(',')
+  return `discover|${p.country.toLowerCase().trim()}|${p.baseCity.toLowerCase().trim()}|r${p.radius}|${acts}${cats ? `|c:${cats}` : ''}`
 }
 
 async function readCache(key: string): Promise<{ places: DiscoverPlace[]; shops?: unknown[]; baseLat: number; baseLon: number; meta: Record<string, unknown> } | null> {
@@ -479,6 +506,9 @@ export async function POST(request: NextRequest) {
     const country: string = body.country || ''
     const rawActivities: string[] = asArray<string>(body.activities)
     const activities = rawActivities.filter((a) => KNOWN_ACTIVITIES.has(a))
+    // Faza 3.5: konkretne typy miejsc (planer dnia). Gdy podane — sterują wyszukiwaniem.
+    const rawCategories: string[] = asArray<string>(body.categories)
+    const categories = rawCategories.filter((c) => POI_QUERIES[c])
     const radius: number = Math.max(10, Math.min(80, Number(body.radius) || 40))
     const sort: SortMode = ['match', 'rating', 'distance'].includes(body.sort) ? body.sort : 'match'
 
@@ -494,7 +524,10 @@ export async function POST(request: NextRequest) {
       lon = coords.lon
     }
 
-    const effActivities = activities.length ? activities : ['sightseeing', 'food']
+    // Gdy podano konkretne typy — aktywności (do kuracji/scoringu) wyprowadzamy z nich.
+    const effActivities = categories.length
+      ? Array.from(new Set(categories.map((c) => CAT_TO_ACTIVITY[c]).filter(Boolean)))
+      : (activities.length ? activities : ['sightseeing', 'food'])
 
     // Auto-uczenie (Element 1): zaloguj realne zapytanie (fire-and-forget).
     // Termometr popularności dla crona auto-ingest. Nie blokuje krytycznej ścieżki
@@ -511,7 +544,7 @@ export async function POST(request: NextRequest) {
 
     // Cache: jeśli świeży wynik dla (kraj, miasto, promień, aktywności) — zwróć,
     // re-sortując wg bieżącego wyboru (sort nie wchodzi do klucza).
-    const cacheKey = buildCacheKey({ baseCity, country, radius, activities: effActivities })
+    const cacheKey = buildCacheKey({ baseCity, country, radius, activities: effActivities, categories })
     const cached = await readCache(cacheKey)
     if (cached && Array.isArray(cached.places)) {
       return NextResponse.json({
@@ -545,10 +578,20 @@ export async function POST(request: NextRequest) {
     for (const c of curated) {
       queries.push({ q: `${c.name} ${c.area || ''} ${country}`.trim(), activity: c.activity, curated: true })
     }
-    for (const a of effActivities) {
-      const templates = ACTIVITY_DEST_QUERIES[a] || []
-      for (const t of templates.slice(0, 2)) {
-        queries.push({ q: `${t} near ${baseCity || country}`, activity: a, curated: false })
+    if (categories.length) {
+      // Faza 3.5: precyzyjne zapytania per konkretny typ miejsca (kawa, bary, cukiernia…).
+      for (const cat of categories) {
+        const templates = POI_QUERIES[cat] || []
+        for (const t of templates.slice(0, 2)) {
+          queries.push({ q: `${t} near ${baseCity || country}`, activity: CAT_TO_ACTIVITY[cat] || null, curated: false })
+        }
+      }
+    } else {
+      for (const a of effActivities) {
+        const templates = ACTIVITY_DEST_QUERIES[a] || []
+        for (const t of templates.slice(0, 2)) {
+          queries.push({ q: `${t} near ${baseCity || country}`, activity: a, curated: false })
+        }
       }
     }
 

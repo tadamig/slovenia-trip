@@ -21,22 +21,33 @@ const ACTIVITY_TAGS: Record<string, string> = {
 
 const DURATION_PRESETS = [30, 60, 90, 120, 180]
 
-// Kategorie wyszukiwania bazy dnia (klucz = aktywność discover).
+// Konkretne typy miejsc bazy dnia (Faza 3.5) — zgodne z POI_QUERIES w /api/discover.
 const CATEGORIES: { key: string; label: string }[] = [
-  { key: 'food', label: '🍽️ Jedzenie' },
-  { key: 'sightseeing', label: '🏛️ Atrakcje' },
-  { key: 'sup', label: '🏄 SUP' },
+  { key: 'restaurant', label: '🍴 Restauracje' },
+  { key: 'cafe', label: '☕ Kawa' },
+  { key: 'bakery', label: '🧁 Cukiernia' },
+  { key: 'bar', label: '🍺 Bary' },
+  { key: 'icecream', label: '🍦 Lody' },
+  { key: 'streetfood', label: '🌭 Street food' },
+  { key: 'landmark', label: '🏛️ Zabytki' },
+  { key: 'museum', label: '🖼️ Muzea' },
+  { key: 'park', label: '🌳 Parki' },
+  { key: 'viewpoint', label: '🌄 Widoki' },
+  { key: 'water', label: '🏄 SUP / woda' },
   { key: 'trekking', label: '🥾 Trekking' },
-  { key: 'sunset', label: '🌅 Widoki' },
-  { key: 'relax', label: '🧘 Relaks' },
-  { key: 'nightlife', label: '🍺 Nocne życie' },
   { key: 'markets', label: '🛒 Targi' },
   { key: 'photo', label: '📸 Foto' },
 ]
 
+// Licznik opinii → zwięzły zapis (3,5k).
+function fmtCount(n?: number): string {
+  if (!n) return ''
+  return n >= 1000 ? `${(n / 1000).toFixed(1).replace('.', ',')}k` : String(n)
+}
+
 export type Leg = { distanceText: string; durationMin: number }
 
-// Polecajka w okolicy dnia (z silnika discover).
+// Polecajka w okolicy dnia (z silnika discover) — pełne dane jak w zakładce Miejsca.
 export type NearbyRec = {
   name: string
   googlePlaceId: string
@@ -45,7 +56,15 @@ export type NearbyRec = {
   tags: string[]
   openingHours?: string[]
   googleRating?: number
+  googleTotalRatings?: number
   distanceFromBase?: number
+  recentReviewHighlights?: string[]
+  sources?: { url: string; title: string }[]
+  mentionCount?: number
+  isOpen?: boolean | null
+  website?: string
+  address?: string
+  curated?: boolean
 }
 
 interface Props {
@@ -121,6 +140,13 @@ export default function DayPlanner({
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const toggleExpand = (id: string) =>
     setExpanded((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  const [recOpen, setRecOpen] = useState<Set<string>>(new Set())
+  const toggleRec = (id: string) =>
+    setRecOpen((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
@@ -473,23 +499,78 @@ export default function DayPlanner({
                   <p className="text-stone-600 text-xs">Brak nowych podpowiedzi — zmień kategorie albo zwiększ promień.</p>
                 ) : (
                   <div className="space-y-1.5">
-                    {nearby.map((r) => (
-                      <div key={r.googlePlaceId} className="flex items-center gap-2.5 bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2">
-                        <MapPin className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-stone-200 text-xs font-medium truncate">{r.name}</p>
-                          <p className="text-stone-500 text-[11px] truncate">
-                            {r.googleRating ? `⭐ ${r.googleRating}` : ''}
-                            {r.googleRating && (r.tags?.length || r.distanceFromBase != null) ? ' · ' : ''}
-                            {(r.tags || []).slice(0, 3).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
-                            {r.distanceFromBase != null ? `${r.tags?.length ? ' · ' : ''}${r.distanceFromBase} km` : ''}
-                          </p>
+                    {nearby.map((r) => {
+                      const open = recOpen.has(r.googlePlaceId)
+                      const hasDetails = !!(r.recentReviewHighlights?.length || r.sources?.length || r.website || r.address)
+                      return (
+                        <div key={r.googlePlaceId} className="bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2.5">
+                          <div className="flex items-start gap-2.5">
+                            <MapPin className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-stone-200 text-sm font-medium truncate">{r.name}</p>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px]">
+                                {r.googleRating != null && (
+                                  <span className="text-amber-400">⭐ {r.googleRating}{r.googleTotalRatings ? ` (${fmtCount(r.googleTotalRatings)})` : ''}</span>
+                                )}
+                                {r.isOpen != null && (
+                                  <span className={r.isOpen ? 'text-emerald-400' : 'text-rose-400'}>{r.isOpen ? 'Otwarte' : 'Zamknięte'}</span>
+                                )}
+                                {r.distanceFromBase != null && <span className="text-stone-500">{r.distanceFromBase} km</span>}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                {r.sources?.length ? (
+                                  <span className="text-[10px] text-amber-300/90 bg-amber-900/20 border border-amber-700/30 rounded-full px-1.5 py-0.5">
+                                    📚 Polecane w {r.sources.length} {r.sources.length === 1 ? 'blogu' : 'blogach'}
+                                  </span>
+                                ) : null}
+                                {r.mentionCount ? (
+                                  <span className="text-[10px] text-stone-400 bg-stone-900/50 border border-stone-700/40 rounded-full px-1.5 py-0.5">wspomniany {r.mentionCount}×</span>
+                                ) : null}
+                                {(r.tags || []).slice(0, 3).map((t) => (
+                                  <span key={t} className="text-[10px] text-stone-400 bg-stone-900/50 border border-stone-700/40 rounded-full px-1.5 py-0.5">{ACTIVITY_TAGS[t] || t}</span>
+                                ))}
+                              </div>
+                            </div>
+                            <button onClick={() => onAddNearby(r)} className="text-amber-400 hover:text-amber-300 flex-shrink-0 mt-0.5" title="Dodaj do dnia">
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {hasDetails && (
+                            <button onClick={() => toggleRec(r.googlePlaceId)} className="mt-1.5 text-[11px] text-water-400 hover:text-water-300 flex items-center gap-1">
+                              <Info className="w-3 h-3" /> {open ? 'Ukryj szczegóły' : 'Szczegóły miejsca'}
+                            </button>
+                          )}
+                          {open && (
+                            <div className="mt-1.5 space-y-1.5 text-[11px]">
+                              {r.address && <p className="text-stone-500">{r.address}</p>}
+                              {r.recentReviewHighlights?.length ? (
+                                <div className="space-y-1">
+                                  {r.recentReviewHighlights.slice(0, 2).map((h, k) => (
+                                    <p key={k} className="text-stone-400 italic">„{h}”</p>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {r.sources?.length ? (
+                                <div className="space-y-0.5">
+                                  <p className="text-stone-500 font-medium">Źródła:</p>
+                                  {r.sources.slice(0, 3).map((s, k) => (
+                                    <a key={k} href={s.url} target="_blank" rel="noopener noreferrer" className="block text-water-400 hover:text-water-300 truncate">
+                                      🔗 {s.title || s.url}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {r.website && (
+                                <a href={r.website} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-water-400 hover:text-water-300">
+                                  <ExternalLink className="w-3 h-3" /> Strona
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <button onClick={() => onAddNearby(r)} className="text-amber-400 hover:text-amber-300 flex-shrink-0" title="Dodaj do dnia">
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>

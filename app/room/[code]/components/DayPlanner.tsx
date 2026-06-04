@@ -21,6 +21,18 @@ const DURATION_PRESETS = [30, 60, 90, 120, 180]
 
 export type Leg = { distanceText: string; durationMin: number }
 
+// Polecajka w okolicy dnia (z silnika discover).
+export type NearbyRec = {
+  name: string
+  googlePlaceId: string
+  lat: number
+  lon: number
+  tags: string[]
+  openingHours?: string[]
+  googleRating?: number
+  distanceFromBase?: number
+}
+
 interface Props {
   startDate: string | null
   days: number
@@ -43,6 +55,9 @@ interface Props {
   insightFresh: boolean
   insightLoading: boolean
   onAnalyze: () => void
+  nearby: NearbyRec[]
+  nearbyLoading: boolean
+  onAddNearby: (rec: NearbyRec) => void
 }
 
 function savedToStop(sp: SavedPlace): NewStop {
@@ -70,6 +85,7 @@ export default function DayPlanner({
   dayItems, legs, routeLoading, savedPlaces,
   onAddStop, onRemoveStop, onMoveWithinDay, onMoveToDay, onUpdateStop, onFocusPlace,
   insight, insightFresh, insightLoading, onAnalyze,
+  nearby, nearbyLoading, onAddNearby,
 }: Props) {
   const [picker, setPicker] = useState(false)
   const [weather, setWeather] = useState<DayWeather | null>(null)
@@ -457,6 +473,44 @@ export default function DayPlanner({
                     </div>
                     <Plus className="w-4 h-4 text-stone-500 flex-shrink-0" />
                   </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Polecajki w okolicy dnia (auto w tle) */}
+        {dayItems.length > 0 && (nearbyLoading || nearby.length > 0) && (
+          <div className="mt-3">
+            <p className="text-xs text-water-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" /> W okolicy mogłoby się spodobać
+            </p>
+            {nearbyLoading && nearby.length === 0 ? (
+              <div className="space-y-1.5">
+                {[0, 1, 2].map((i) => <div key={i} className="h-12 bg-stone-800/40 rounded-xl animate-pulse" />)}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {nearby.map((r) => (
+                  <div key={r.googlePlaceId} className="flex items-center gap-2.5 bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2">
+                    <MapPin className="w-4 h-4 text-water-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-stone-200 text-xs font-medium truncate">{r.name}</p>
+                      <p className="text-stone-500 text-[11px] truncate">
+                        {r.googleRating ? `⭐ ${r.googleRating}` : ''}
+                        {r.googleRating && (r.tags?.length || r.distanceFromBase != null) ? ' · ' : ''}
+                        {(r.tags || []).slice(0, 3).map((t) => ACTIVITY_TAGS[t] || t).join(' · ')}
+                        {r.distanceFromBase != null ? `${r.tags?.length ? ' · ' : ''}${r.distanceFromBase} km` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => onAddNearby(r)}
+                      className="text-water-400 hover:text-water-300 flex-shrink-0"
+                      title="Dodaj do dnia"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

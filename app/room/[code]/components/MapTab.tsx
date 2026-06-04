@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { getSessionId } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount, dateForDay, openingLineForDate, fetchDayWeather } from './itineraryUtils'
-import DayPlanner, { Leg } from './DayPlanner'
+import DayPlanner, { Leg, NearbyRec } from './DayPlanner'
 
 interface Props {
   room: Room
@@ -58,6 +58,11 @@ export default function MapTab({ room, myPrefs }: Props) {
   // Analiza dnia (Faza 3) — cache w day_insights, współdzielony przez ekipę.
   const [insightsByDay, setInsightsByDay] = useState<Record<number, { signature: string; payload: DayInsightPayload }>>({})
   const [insightLoading, setInsightLoading] = useState(false)
+
+  // Polecajki w okolicy dnia (Faza 3.2) — auto w tle, cache po centroidzie.
+  const [nearbyRaw, setNearbyRaw] = useState<NearbyRec[]>([])
+  const [nearbyLoading, setNearbyLoading] = useState(false)
+  const nearbyCacheRef = useRef<Record<string, NearbyRec[]>>({})
 
   const { items, addStop, removeStop, updateStop, moveWithinDay, moveToDay } = useItinerary(room.id, sessionId)
 
@@ -288,6 +293,77 @@ export default function MapTab({ room, myPrefs }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insightLoading, dayItems, legs, selectedDay, room.id, room.start_date, room.end_city, myPrefs])
 
+  // Centroid wybranego dnia (do polecajek w okolicy).
+  const centroid = useMemo(() => {
+    const pts = dayItems.filter((it) => it.lat != null && it.lon != null)
+    if (!pts.length) return null
+    const lat = pts.reduce((s, it) => s + (it.lat as number), 0) / pts.length
+    const lon = pts.reduce((s, it) => s + (it.lon as number), 0) / pts.length
+    return { lat, lon }
+  }, [dayItems])
+  const nearbyKey = centroid ? `${centroid.lat.toFixed(2)},${centroid.lon.toFixed(2)}` : ''
+
+  // Auto-pobieranie polecajek w okolicy (debounce + cache po centroidzie).
+  useEffect(() => {
+    if (!centroid || !nearbyKey) { setNearbyRaw([]); return }
+    if (nearbyCacheRef.current[nearbyKey]) { setNearbyRaw(nearbyCacheRef.current[nearbyKey]); return }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      setNearbyLoading(true)
+      try {
+        const res = await fetch('/api/discover', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseCity: room.end_city || '',
+            country: room.country || '',
+            baseLat: centroid.lat,
+            baseLon: centroid.lon,
+            radius: 20,
+            activities: (myPrefs?.activities as string[]) || [],
+            sort: 'match',
+          }),
+        })
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        const recs: NearbyRec[] = (data.places || [])
+          .filter((p: any) => typeof p.lat === 'number' && typeof p.lon === 'number')
+          .map((p: any) => ({
+            name: p.name, googlePlaceId: p.googlePlaceId, lat: p.lat, lon: p.lon,
+            tags: p.tags || [], openingHours: p.openingHours, googleRating: p.googleRating,
+            distanceFromBase: p.distanceFromBase,
+          }))
+        if (cancelled) return
+        nearbyCacheRef.current[nearbyKey] = recs
+        setNearbyRaw(recs)
+      } finally {
+        if (!cancelled) setNearbyLoading(false)
+      }
+    }, 700)
+    return () => { cancelled = true; clearTimeout(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nearbyKey])
+
+  // Wyklucz to, co już jest w planie lub zapisane; pokaż maks. 6.
+  const nearby = useMemo(() => {
+    const names = new Set<string>()
+    const ids = new Set<string>()
+    items.forEach((it) => { names.add(it.place_name.toLowerCase()); if (it.place_id) ids.add(it.place_id) })
+    savedPlaces.forEach((sp) => { names.add(sp.place_name.toLowerCase()); const pid = sp.place_data?.place_id; if (pid) ids.add(pid) })
+    return nearbyRaw.filter((r) => !ids.has(r.googlePlaceId) && !names.has(r.name.toLowerCase())).slice(0, 6)
+  }, [nearbyRaw, items, savedPlaces])
+
+  const addNearby = useCallback((rec: NearbyRec) => {
+    addStop(selectedDay, {
+      place_name: rec.name,
+      place_id: rec.googlePlaceId,
+      lat: rec.lat,
+      lon: rec.lon,
+      opening_hours: rec.openingHours ?? null,
+      tags: rec.tags || [],
+    })
+  }, [addStop, selectedDay])
+
   const handleAddDay = () => { setExtraDays((v) => v + 1); setSelectedDay(days) }
   const handleRemoveDay = (d: number) => {
     setExtraDays((v) => Math.max(0, v - 1))
@@ -359,6 +435,9 @@ export default function MapTab({ room, myPrefs }: Props) {
           insightFresh={insightFresh}
           insightLoading={insightLoading}
           onAnalyze={analyzeDay}
+          nearby={nearby}
+          nearbyLoading={nearbyLoading}
+          onAddNearby={addNearby}
         />
       </div>
     </div>

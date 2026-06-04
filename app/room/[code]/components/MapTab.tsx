@@ -16,22 +16,6 @@ interface Props {
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 
-// Ciemny styl mapy pod motyw aplikacji (stone-950).
-const DARK_STYLE: google.maps.MapTypeStyle[] = [
-  { elementType: 'geometry', stylers: [{ color: '#1c1917' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1c1917' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#a8a29e' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#57534e' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#78716c' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1f2a1f' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#292524' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#78716c' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#44403c' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#292524' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0c2733' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#2cc4ff' }] },
-]
-
 function placeCoords(sp: SavedPlace): { lat: number; lon: number } | null {
   const c = sp.place_data?.coordinates
   if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
@@ -40,13 +24,20 @@ function placeCoords(sp: SavedPlace): { lat: number; lon: number } | null {
   return null
 }
 
+// metry → zwięzły tekst dystansu.
+function fmtKm(m: number): string {
+  if (m < 1000) return `${Math.round(m)} m`
+  const km = m / 1000
+  return km >= 10 ? `${Math.round(km)} km` : `${km.toFixed(1)} km`
+}
+
 export default function MapTab({ room }: Props) {
   const sessionId = typeof window !== 'undefined' ? getSessionId() : ''
 
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<google.maps.Map | null>(null)
-  const dirServiceRef = useRef<google.maps.DirectionsService | null>(null)
-  const dirRendererRef = useRef<google.maps.DirectionsRenderer | null>(null)
+  const routeClassRef = useRef<typeof google.maps.routes.Route | null>(null)
+  const routePolylineRef = useRef<google.maps.Polyline | null>(null)
   const stopMarkersRef = useRef<google.maps.Marker[]>([])
   const savedMarkersRef = useRef<google.maps.Marker[]>([])
 
@@ -88,31 +79,24 @@ export default function MapTab({ room }: Props) {
     return arr
   }, [items, days])
 
-  // Inicjalizacja mapy + biblioteki tras (raz).
+  // Inicjalizacja mapy + biblioteki tras (raz). Jasna mapa (styl domyślny Google).
   useEffect(() => {
     if (!GMAPS_KEY) { setLoadError('no-key'); return }
     let cancelled = false
     setOptions({ key: GMAPS_KEY, v: 'weekly' })
 
     Promise.all([importLibrary('maps'), importLibrary('routes')])
-      .then(([{ Map }, { DirectionsService, DirectionsRenderer }]) => {
+      .then(([{ Map }, { Route }]) => {
         if (cancelled || !mapRef.current || mapInstanceRef.current) return
         const map = new Map(mapRef.current, {
           center: { lat: 46.15, lng: 14.99 },
           zoom: 7,
-          styles: DARK_STYLE,
           disableDefaultUI: true,
           zoomControl: true,
           gestureHandling: 'greedy',
         })
         mapInstanceRef.current = map
-        dirServiceRef.current = new DirectionsService()
-        dirRendererRef.current = new DirectionsRenderer({
-          map,
-          suppressMarkers: true,
-          preserveViewport: true,
-          polylineOptions: { strokeColor: '#3d7f41', strokeOpacity: 0.9, strokeWeight: 4 },
-        })
+        routeClassRef.current = Route
         setMapReady(true)
       })
       .catch(() => { if (!cancelled) setLoadError('load-failed') })
@@ -123,9 +107,9 @@ export default function MapTab({ room }: Props) {
       savedMarkersRef.current.forEach((m) => m.setMap(null))
       stopMarkersRef.current = []
       savedMarkersRef.current = []
-      dirRendererRef.current?.setMap(null)
-      dirRendererRef.current = null
-      dirServiceRef.current = null
+      routePolylineRef.current?.setMap(null)
+      routePolylineRef.current = null
+      routeClassRef.current = null
       mapInstanceRef.current = null
     }
   }, [])
@@ -150,21 +134,22 @@ export default function MapTab({ room }: Props) {
     })
   }, [savedPlaces, mapReady])
 
-  // Trasa wybranego dnia (realne Google Directions) + numerowane markery.
+  // Trasa wybranego dnia (nowe Routes API) + numerowane markery.
   const routeKey = dayItems.map((it) => `${it.lat},${it.lon}`).join('|')
   useEffect(() => {
     const map = mapInstanceRef.current
-    const svc = dirServiceRef.current
-    const renderer = dirRendererRef.current
-    if (!map || !mapReady || !svc || !renderer) return
+    const Route = routeClassRef.current
+    if (!map || !mapReady || !Route) return
+    let cancelled = false
 
-    // Wyczyść poprzednie numerowane markery.
+    // Wyczyść poprzednie numerowane markery + trasę.
     stopMarkersRef.current.forEach((m) => m.setMap(null))
     stopMarkersRef.current = []
+    routePolylineRef.current?.setMap(null)
+    routePolylineRef.current = null
 
     const pts = dayItems.filter((it) => it.lat != null && it.lon != null) as (ItineraryItem & { lat: number; lon: number })[]
 
-    // Numerowane markery dla każdego przystanku.
     const bounds = new google.maps.LatLngBounds()
     pts.forEach((it, i) => {
       bounds.extend({ lat: it.lat, lng: it.lon })
@@ -180,8 +165,6 @@ export default function MapTab({ room }: Props) {
     })
 
     if (pts.length < 2) {
-      // Brak trasy do narysowania.
-      renderer.setMap(null)
       setLegs([])
       setRouteLoading(false)
       if (pts.length === 1) { map.panTo({ lat: pts[0].lat, lng: pts[0].lon }); map.setZoom(11) }
@@ -189,29 +172,41 @@ export default function MapTab({ room }: Props) {
     }
 
     setRouteLoading(true)
-    const origin = { lat: pts[0].lat, lng: pts[0].lon }
-    const destination = { lat: pts[pts.length - 1].lat, lng: pts[pts.length - 1].lon }
-    const waypoints = pts.slice(1, -1).map((it) => ({ location: { lat: it.lat, lng: it.lon }, stopover: true }))
-
-    svc.route(
-      { origin, destination, waypoints, travelMode: google.maps.TravelMode.DRIVING, optimizeWaypoints: false },
-      (result, status) => {
+    Route.computeRoutes({
+      origin: { lat: pts[0].lat, lng: pts[0].lon },
+      destination: { lat: pts[pts.length - 1].lat, lng: pts[pts.length - 1].lon },
+      intermediates: pts.slice(1, -1).map((it) => ({ location: { lat: it.lat, lng: it.lon } })),
+      travelMode: 'DRIVING',
+      fields: ['legs', 'path', 'viewport'],
+    })
+      .then(({ routes }) => {
+        if (cancelled) return
         setRouteLoading(false)
-        if (status === google.maps.DirectionsStatus.OK && result) {
-          renderer.setMap(map)
-          renderer.setDirections(result)
-          const rLegs = result.routes[0]?.legs || []
-          setLegs(rLegs.map((l) => ({ distanceText: l.distance?.text || '—', durationMin: Math.round((l.duration?.value || 0) / 60) })))
-          const b = result.routes[0]?.bounds
-          if (b) map.fitBounds(b, 56)
-        } else {
-          // Nie udało się wyznaczyć trasy — pokaż same markery.
-          renderer.setMap(null)
-          setLegs([])
-          map.fitBounds(bounds, 56)
+        const route = routes?.[0]
+        if (!route) { setLegs([]); map.fitBounds(bounds, 56); return }
+
+        // Narysuj trasę.
+        const path = (route.path || []).map((p) => ({ lat: p.lat, lng: p.lng }))
+        if (path.length) {
+          routePolylineRef.current = new google.maps.Polyline({
+            path, map, strokeColor: '#3d7f41', strokeOpacity: 0.9, strokeWeight: 4, zIndex: 5,
+          })
         }
-      },
-    )
+        // Odcinki: dystans + czas jazdy.
+        const rLegs = route.legs || []
+        setLegs(rLegs.map((l) => ({ distanceText: fmtKm(l.distanceMeters || 0), durationMin: Math.round((l.durationMillis || 0) / 60000) })))
+        const vp = route.viewport
+        if (vp) map.fitBounds(vp, 56)
+        else map.fitBounds(bounds, 56)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setRouteLoading(false)
+        setLegs([])
+        map.fitBounds(bounds, 56)
+      })
+
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey, mapReady])
 
@@ -259,10 +254,10 @@ export default function MapTab({ room }: Props) {
 
         {mapReady && (
           <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 5 }} className="bg-stone-900/90 backdrop-blur-sm border border-stone-700 rounded-xl p-2 space-y-1">
-            <div className="flex items-center gap-2 text-xs text-stone-400">
+            <div className="flex items-center gap-2 text-xs text-stone-300">
               <div className="w-3 h-3 rounded-full bg-forest-600" /> Trasa dnia {selectedDay + 1}
             </div>
-            <div className="flex items-center gap-2 text-xs text-stone-400">
+            <div className="flex items-center gap-2 text-xs text-stone-300">
               <div className="w-3 h-3 rounded-full bg-water-400" /> Zapisane
             </div>
           </div>

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import ChunkErrorReloader from './ChunkErrorReloader'
 
 export const metadata: Metadata = {
   title: 'Wyprawa — Planowanie Trasy',
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       </head>
       <body className="font-body bg-stone-950 text-stone-100 min-h-screen">
+        <ChunkErrorReloader />
         {children}
       </body>
     </html>

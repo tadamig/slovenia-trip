@@ -80,11 +80,11 @@ export default function GuideDetailModal({
       onClick={onClose}
     >
       <div
-        className="bg-stone-900 w-full sm:max-w-lg max-h-[92vh] rounded-t-2xl sm:rounded-2xl overflow-y-auto border border-stone-700/50 shadow-2xl"
+        className="bg-stone-900 w-full sm:max-w-lg max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden border border-stone-700/50 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Nagłówek */}
-        <div className="sticky top-0 z-10 bg-stone-900/95 backdrop-blur px-4 py-3 border-b border-stone-800 flex items-start gap-2">
+        {/* Nagłówek — zawsze widoczny (X nie chowa się przy przewijaniu) */}
+        <div className="flex-shrink-0 bg-stone-900 px-4 py-3 border-b border-stone-800 flex items-start gap-2">
           <span className="text-xl flex-shrink-0">{catEmoji}</span>
           <div className="flex-1 min-w-0">
             <h3 className="text-stone-100 font-semibold leading-tight">{place.name}</h3>
@@ -101,6 +101,8 @@ export default function GuideDetailModal({
           </button>
         </div>
 
+        {/* Korpus przewijany (nagłówek zostaje na górze) */}
+        <div className="overflow-y-auto overscroll-contain flex-1">
         {/* Slider zdjęć */}
         {loading ? (
           <div className="h-52 bg-stone-800/50 animate-pulse" />
@@ -266,6 +268,7 @@ export default function GuideDetailModal({
               Podsumowanie opracowane na podstawie poradnika, danych Google i wyników z sieci. Tipy/czas/cena mogą być uproszczone — zweryfikuj na miejscu.
             </p>
           )}
+        </div>
         </div>
       </div>
     </div>

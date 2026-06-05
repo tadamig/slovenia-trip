@@ -259,8 +259,8 @@ export default function GuideTab() {
                 <p className="text-stone-100 text-sm font-medium">{p.name}</p>
                 <div className="flex items-center gap-2 mt-0.5 text-[11px] text-stone-500 flex-wrap">
                   <span>{CAT[p.category]?.label || p.category}</span>
-                  {p.google_rating != null && (
-                    <span className="text-amber-400 flex items-center gap-0.5"><Star className="w-3 h-3" /> {p.google_rating}</span>
+                  {p.google_rating != null && p.google_rating > 0 && (
+                    <span className="text-amber-400 flex items-center gap-0.5"><Star className="w-3 h-3" /> {p.google_rating}{p.google_total_ratings ? ` (${p.google_total_ratings})` : ''}</span>
                   )}
                   {dist != null && <span className="text-water-400">{fmtKm(dist)}</span>}
                 </div>

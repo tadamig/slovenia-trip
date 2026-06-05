@@ -132,6 +132,24 @@ export type PlaceNote = {
   created_at: string
 }
 
+// ——— PRZEWODNIK (opcjonalny dodatek z PDF Couple Away) ———
+// Globalny, niezależny od pokoju. Patrz lib/featureFlags.ts (GUIDE_ENABLED).
+export type GuidePlace = {
+  id: string
+  name: string
+  category: string
+  category_label: string | null
+  lat: number | null
+  lon: number | null
+  description: string | null
+  google_place_id: string | null
+  google_rating: number | null
+  google_total_ratings: number | null
+  address: string | null
+  source: string
+  created_at: string
+}
+
 // ——— INTELIGENCJA DNIA (Faza 3) ———
 // Analiza AI (DeepSeek) + parking (Google Nearby + Brave) dla dnia planera.
 // Liczona na żądanie, cache'owana i współdzielona przez ekipę (realtime).

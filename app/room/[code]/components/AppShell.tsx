@@ -8,6 +8,10 @@ import PackingList from './PackingList'
 import GroupProfile from './GroupProfile'
 import WeatherWidget from './WeatherWidget'
 import PlacesTab from './PlacesTab'
+import { GUIDE_ENABLED } from '@/lib/featureFlags'
+
+// Przewodnik (opcjonalny dodatek z PDF) — ładowany dynamicznie (geolokalizacja).
+const GuideTab = dynamic(() => import('./GuideTab'), { ssr: false })
 
 // Mapa ładowana dynamicznie (wymaga window/browser)
 const MapTab = dynamic(() => import('./MapTab'), {
@@ -28,6 +32,7 @@ const TABS = [
   { id: 'weather', label: 'Pogoda', icon: '🌤️' },
   { id: 'places', label: 'Miejsca', icon: '📍' },
   { id: 'map', label: 'Mapa', icon: '🗺️' },
+  ...(GUIDE_ENABLED ? [{ id: 'guide', label: 'Przewodnik', icon: '📖' }] : []),
 ]
 
 interface Props {
@@ -122,6 +127,11 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
               <MapTab room={room} myPrefs={myPrefs} />
             )}
           </div>
+          {GUIDE_ENABLED && (
+            <div ref={setPanelRef('guide')} style={panelStyle('guide')}>
+              {visited.guide && <GuideTab />}
+            </div>
+          )}
         </div>
       </div>
 

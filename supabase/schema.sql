@@ -151,3 +151,27 @@ BEGIN
   RETURN result;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================
+-- OPCJONALNY DODATEK: PRZEWODNIK (PDF Couple Away) — łatwo usuwalny
+-- Flaga front: lib/featureFlags.ts (GUIDE_ENABLED). Usunięcie: DROP TABLE poniżej
+-- + skasuj GuideTab.tsx i wpis w AppShell. Nie zależy od reszty schematu.
+-- ============================================
+CREATE TABLE IF NOT EXISTS guide_places (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  name text NOT NULL,
+  category text NOT NULL,            -- attraction/restaurant/beach/trail/wine/camping/parking/lodging
+  category_label text,
+  lat double precision,
+  lon double precision,
+  description text,                  -- streszczony opis z PDF (uzupełniany osobno)
+  google_place_id text,
+  google_rating double precision,
+  google_total_ratings integer,
+  address text,
+  source text DEFAULT 'coupleaway-pdf',
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE guide_places ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public_read_guide_places" ON guide_places FOR SELECT USING (true);
+CREATE INDEX IF NOT EXISTS guide_places_category_idx ON guide_places (category);

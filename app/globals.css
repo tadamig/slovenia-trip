@@ -69,3 +69,7 @@ body {
 
 /* Leaflet CSS inline to avoid SSR import issues */
 @import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+
+/* Przewodnik: ukryty pasek przewijania slidera zdjęć (usuwalne z Przewodnikiem) */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }

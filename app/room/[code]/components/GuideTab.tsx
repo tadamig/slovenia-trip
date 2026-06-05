@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader'
 import { supabase, GuidePlace } from '@/lib/supabase'
-import { MapPin, Navigation, Crosshair, Search, Star } from 'lucide-react'
+import { MapPin, Navigation, Crosshair, Search, Star, Info } from 'lucide-react'
+import GuideDetailModal from './GuideDetailModal'
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 
@@ -38,6 +39,7 @@ export default function GuideTab() {
   const [query, setQuery] = useState('')
   const [userPos, setUserPos] = useState<{ lat: number; lon: number } | null>(null)
   const [geoState, setGeoState] = useState<'idle' | 'loading' | 'denied' | 'ok'>('idle')
+  const [detail, setDetail] = useState<{ place: GuidePlace; dist: number | null } | null>(null)
 
   const mapWrapRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<HTMLDivElement>(null)
@@ -265,20 +267,41 @@ export default function GuideTab() {
                   {dist != null && <span className="text-water-400">{fmtKm(dist)}</span>}
                 </div>
                 {p.description && <p className="text-stone-400 text-xs mt-1 leading-relaxed">{p.description}</p>}
-                {p.lat != null && p.lon != null && (
-                  <div className="flex items-center gap-3 mt-1.5" onClick={(e) => e.stopPropagation()}>
-                    <a href={navUrl(p.lat, p.lon)} target="_blank" rel="noopener noreferrer" className="text-[11px] text-water-400 hover:text-water-300 inline-flex items-center gap-1">
-                      <Navigation className="w-3 h-3" /> Nawiguj
-                    </a>
-                    <a href={viewUrl(p.name, p.lat, p.lon)} target="_blank" rel="noopener noreferrer" className="text-[11px] text-stone-500 hover:text-stone-300 inline-flex items-center gap-1">
-                      <MapPin className="w-3 h-3" /> Google Maps
-                    </a>
-                  </div>
-                )}
+                <div className="flex items-center gap-3 mt-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setDetail({ place: p, dist })}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setDetail({ place: p, dist }) }}
+                    className="text-[11px] text-forest-300 hover:text-forest-200 inline-flex items-center gap-1 cursor-pointer font-medium"
+                  >
+                    <Info className="w-3 h-3" /> Więcej
+                  </span>
+                  {p.lat != null && p.lon != null && (
+                    <>
+                      <a href={navUrl(p.lat, p.lon)} target="_blank" rel="noopener noreferrer" className="text-[11px] text-water-400 hover:text-water-300 inline-flex items-center gap-1">
+                        <Navigation className="w-3 h-3" /> Nawiguj
+                      </a>
+                      <a href={viewUrl(p.name, p.lat, p.lon)} target="_blank" rel="noopener noreferrer" className="text-[11px] text-stone-500 hover:text-stone-300 inline-flex items-center gap-1">
+                        <MapPin className="w-3 h-3" /> Google Maps
+                      </a>
+                    </>
+                  )}
+                </div>
               </div>
             </button>
           ))}
         </div>
+      )}
+
+      {detail && (
+        <GuideDetailModal
+          place={detail.place}
+          dist={detail.dist}
+          catLabel={CAT[detail.place.category]?.label || detail.place.category}
+          catEmoji={CAT[detail.place.category]?.emoji || '📍'}
+          onClose={() => setDetail(null)}
+        />
       )}
     </div>
   )

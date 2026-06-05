@@ -491,14 +491,14 @@ export default function DayPlanner({
                 />
               </div>
 
-              <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+              <div className="flex flex-wrap gap-1.5">
                 {CATEGORIES.map((c) => {
                   const on = dayCategories[0] === c.key
                   return (
                     <button
                       key={c.key}
                       onClick={() => onSelectCategory(c.key)}
-                      className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                         on
                           ? 'bg-forest-600 text-white border-forest-500'
                           : 'bg-stone-800/60 text-stone-400 border-stone-700/40 hover:text-stone-200'

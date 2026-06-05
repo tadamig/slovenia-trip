@@ -19,14 +19,14 @@ const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 // Konkretne typy miejsc bazy dnia (Faza 3.5) — zgodne z POI_QUERIES w /api/discover.
 const KNOWN_CATS = [
   'restaurant', 'cafe', 'bakery', 'bar', 'icecream', 'streetfood',
-  'landmark', 'museum', 'park', 'viewpoint', 'water', 'trekking', 'markets', 'photo',
+  'landmark', 'museum', 'park', 'viewpoint', 'sup', 'trekking', 'markets', 'photo',
 ]
 
 // Mapowanie szerokich preferencji ekipy → konkretne typy (domyślne zaznaczenie).
 const PREF_TO_CATS: Record<string, string[]> = {
   food: ['restaurant', 'cafe'],
   sightseeing: ['landmark', 'museum'],
-  sup: ['water'],
+  sup: ['sup'],
   trekking: ['trekking'],
   markets: ['markets'],
   nightlife: ['bar'],
@@ -336,10 +336,11 @@ export default function MapTab({ room, myPrefs }: Props) {
   }, [insightLoading, dayItems, legs, selectedDay, room.id, room.start_date, room.end_city, myPrefs])
 
   // ——— Baza dnia (Faza 3.4): miasto, promień, kategorie ———
+  // Pojedynczy wybór (Faza 3.6): domyślnie JEDNA kategoria z preferencji ekipy.
   const defaultCats = useMemo(() => {
-    const out = new Set<string>()
-    ;((myPrefs?.activities as string[]) || []).forEach((a) => (PREF_TO_CATS[a] || []).forEach((c) => out.add(c)))
-    return out.size ? Array.from(out) : ['restaurant', 'landmark']
+    const out: string[] = []
+    ;((myPrefs?.activities as string[]) || []).forEach((a) => (PREF_TO_CATS[a] || []).forEach((c) => { if (!out.includes(c)) out.push(c) }))
+    return [out[0] || 'restaurant']
   }, [myPrefs])
   const metaRow = dayMetaByDay[selectedDay]
   const dayCity = metaRow?.city || ''
@@ -367,11 +368,10 @@ export default function MapTab({ room, myPrefs }: Props) {
 
   const setDayCity = useCallback((city: string, country: string) => { saveMeta({ city, country }) }, [saveMeta])
   const setDayRadius = useCallback((radius: number) => { saveMeta({ radius }) }, [saveMeta])
-  const toggleCategory = useCallback((cat: string) => {
-    const set = new Set(dayCategories)
-    set.has(cat) ? set.delete(cat) : set.add(cat)
-    saveMeta({ categories: Array.from(set) })
-  }, [dayCategories, saveMeta])
+  // Pojedynczy wybór: stuknięcie kategorii zastępuje poprzednią i od razu szuka.
+  const selectCategory = useCallback((cat: string) => {
+    saveMeta({ categories: [cat] })
+  }, [saveMeta])
 
   // Eksploracja wokół bazy dnia (discover po mieście + promieniu + kategoriach).
   const exploreKey = dayCity ? `${dayCity}|${dayCountry}|r${dayRadius}|${[...dayCategories].sort().join(',')}` : ''
@@ -548,7 +548,7 @@ export default function MapTab({ room, myPrefs }: Props) {
           dayCategories={dayCategories}
           onSetCity={setDayCity}
           onSetRadius={setDayRadius}
-          onToggleCategory={toggleCategory}
+          onSelectCategory={selectCategory}
         />
       </div>
     </div>

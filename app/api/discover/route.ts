@@ -96,7 +96,7 @@ const POI_QUERIES: Record<string, string[]> = {
   museum: ['museum', 'art gallery'],
   park: ['city park garden', 'nature reserve park'],
   viewpoint: ['panoramic viewpoint', 'scenic lookout'],
-  water: ['lake to swim', 'beach natural swimming spot'],
+  sup: ['lake for stand up paddle SUP', 'river SUP kayak spot'],
   trekking: ['hiking trail', 'gorge waterfall trail'],
   markets: ['tržnica farmers market', 'market hall local market'],
   photo: ['scenic photo spot', 'most photogenic viewpoint'],
@@ -106,7 +106,7 @@ const POI_QUERIES: Record<string, string[]> = {
 const CAT_TO_ACTIVITY: Record<string, string> = {
   restaurant: 'food', cafe: 'food', bakery: 'food', bar: 'nightlife', icecream: 'food',
   streetfood: 'food', landmark: 'sightseeing', museum: 'sightseeing', park: 'trekking',
-  viewpoint: 'sunset', water: 'sup', trekking: 'trekking', markets: 'markets', photo: 'photo',
+  viewpoint: 'sunset', sup: 'sup', trekking: 'trekking', markets: 'markets', photo: 'photo',
 }
 
 // Typy Google, które są usługami/sklepami — nie chcemy ich jako "atrakcji"
@@ -183,7 +183,7 @@ function googleTypesToCats(types: string[]): string[] {
   if (has('museum') || has('art_gallery')) out.add('museum')
   if (has('tourist_attraction') || has('church') || has('place_of_worship') || has('city_hall')) out.add('landmark')
   if (has('park')) { out.add('park'); out.add('trekking') }
-  if (has('natural_feature')) { out.add('water'); out.add('viewpoint'); out.add('trekking') }
+  if (has('natural_feature')) { out.add('sup'); out.add('viewpoint'); out.add('trekking') }
   if (has('campground') || has('rv_park')) out.add('trekking')
   return Array.from(out)
 }

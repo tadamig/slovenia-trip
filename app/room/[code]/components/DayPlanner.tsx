@@ -33,7 +33,7 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: 'museum', label: '🖼️ Muzea' },
   { key: 'park', label: '🌳 Parki' },
   { key: 'viewpoint', label: '🌄 Widoki' },
-  { key: 'water', label: '🏄 SUP / woda' },
+  { key: 'sup', label: '🏄 SUP' },
   { key: 'trekking', label: '🥾 Trekking' },
   { key: 'markets', label: '🛒 Targi' },
   { key: 'photo', label: '📸 Foto' },
@@ -100,7 +100,7 @@ interface Props {
   dayCategories: string[]
   onSetCity: (city: string, country: string) => void
   onSetRadius: (radius: number) => void
-  onToggleCategory: (cat: string) => void
+  onSelectCategory: (cat: string) => void
 }
 
 function savedToStop(sp: SavedPlace): NewStop {
@@ -136,8 +136,9 @@ export default function DayPlanner({
   onAddStop, onRemoveStop, onMoveWithinDay, onMoveToDay, onUpdateStop, onFocusPlace,
   insight, insightFresh, insightLoading, onAnalyze,
   nearby, nearbyLoading, onAddNearby,
-  dayCity, dayRadius, dayCategories, onSetCity, onSetRadius, onToggleCategory,
+  dayCity, dayRadius, dayCategories, onSetCity, onSetRadius, onSelectCategory,
 }: Props) {
+  const [view, setView] = useState<'plan' | 'explore'>('explore')
   const [picker, setPicker] = useState(false)
   const [weather, setWeather] = useState<DayWeather | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -265,8 +266,25 @@ export default function DayPlanner({
         </div>
       </div>
 
-      {/* Ostrzeżenia */}
-      {dayItems.length > 0 && (feasibility.overBudget || feasibility.closedCount > 0) && (
+      {/* Przełącznik widoku: Plan / Odkrywaj */}
+      <div className="px-3 pt-2.5 pb-1">
+        <div className="flex gap-1 bg-stone-800/40 border border-stone-700/30 rounded-xl p-1">
+          {([['plan', `📋 Plan${dayItems.length ? ` · ${dayItems.length}` : ''}`], ['explore', '🔍 Odkrywaj']] as const).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-all ${
+                view === v ? 'bg-gradient-to-br from-forest-600/80 to-water-600/70 text-white' : 'text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Ostrzeżenia (Plan) */}
+      {view === 'plan' && dayItems.length > 0 && (feasibility.overBudget || feasibility.closedCount > 0) && (
         <div className="px-4 pb-1 space-y-1">
           {feasibility.overBudget && (
             <p className="text-xs text-amber-400/90 flex items-center gap-1.5">
@@ -284,11 +302,12 @@ export default function DayPlanner({
         </div>
       )}
 
-      {/* Lista przystanków dnia */}
+      {/* Treść widoku */}
       <div className="px-4 pt-2 pb-3">
-        {dayItems.length === 0 ? (
+        {/* PLAN: lista przystanków dnia */}
+        {view === 'plan' && (dayItems.length === 0 ? (
           <p className="text-stone-600 text-xs bg-stone-800/30 border border-dashed border-stone-700/40 rounded-xl px-3 py-4 text-center">
-            Pusty dzień. Ustaw poniżej miasto/okolicę dnia, wybierz miejsca z podpowiedzi — policzę trasę, czasy i sprawdzę, czy się wyrobicie.
+            Pusty dzień. Wejdź w „🔍 Odkrywaj”, wybierz miasto i typ miejsc — dodasz je tu, a policzę trasę, czasy i wykonalność.
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -446,10 +465,11 @@ export default function DayPlanner({
               )
             })}
           </div>
-        )}
+        ))}
 
-        {/* Baza dnia + eksploracja okolicy (Faza 3.4) */}
-        <div className="mt-3 bg-stone-800/30 border border-stone-700/40 rounded-xl p-3 space-y-3">
+        {/* ODKRYWAJ: baza dnia + eksploracja okolicy */}
+        {view === 'explore' && (
+        <div className="bg-stone-800/30 border border-stone-700/40 rounded-xl p-3 space-y-3">
           <CityAutocomplete
             value={dayCity}
             onChange={(c, country) => onSetCity(c, country)}
@@ -471,16 +491,16 @@ export default function DayPlanner({
                 />
               </div>
 
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
                 {CATEGORIES.map((c) => {
-                  const on = dayCategories.includes(c.key)
+                  const on = dayCategories[0] === c.key
                   return (
                     <button
                       key={c.key}
-                      onClick={() => onToggleCategory(c.key)}
-                      className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
+                      onClick={() => onSelectCategory(c.key)}
+                      className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${
                         on
-                          ? 'bg-forest-600/70 text-white border-forest-500/50'
+                          ? 'bg-forest-600 text-white border-forest-500'
                           : 'bg-stone-800/60 text-stone-400 border-stone-700/40 hover:text-stone-200'
                       }`}
                     >
@@ -492,7 +512,7 @@ export default function DayPlanner({
 
               <div>
                 <p className="text-xs text-water-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" /> W okolicy: {dayCity}
+                  <Sparkles className="w-3.5 h-3.5" /> {dayCity}{dayCategories[0] ? ` · ${CAT_LABEL[dayCategories[0]] || dayCategories[0]}` : ''}
                 </p>
                 {nearbyLoading && nearby.length === 0 ? (
                   <div className="space-y-1.5">
@@ -584,9 +604,10 @@ export default function DayPlanner({
             </p>
           )}
         </div>
+        )}
 
-        {/* Analiza dnia (AI + parking) */}
-        {dayItems.length > 0 && (
+        {/* PLAN: analiza dnia (AI + parking) */}
+        {view === 'plan' && dayItems.length > 0 && (
           <div className="mt-3">
             <button
               onClick={onAnalyze}
@@ -684,7 +705,8 @@ export default function DayPlanner({
           </div>
         )}
 
-        {/* Dodawanie miejsc */}
+        {/* PLAN: dodawanie z zapisanych (drugorzędne) */}
+        {view === 'plan' && (<>
         <button
           onClick={() => setPicker((v) => !v)}
           className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-stone-800/30 border border-dashed border-stone-700/40 text-stone-400 text-xs hover:border-forest-700/50 transition-all"
@@ -726,9 +748,10 @@ export default function DayPlanner({
             )}
           </div>
         )}
+        </>)}
 
-        {/* Podpowiedź pogodowa */}
-        {weather && weatherHint(weather) && (
+        {/* PLAN: podpowiedź pogodowa */}
+        {view === 'plan' && weather && weatherHint(weather) && (
           <p className="mt-2 text-xs text-stone-400 bg-stone-800/40 border border-stone-700/30 rounded-xl px-3 py-2">
             {weatherHint(weather)}
           </p>

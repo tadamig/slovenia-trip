@@ -5,6 +5,7 @@
 // Część Przewodnika — usuwalne razem z całą funkcją (skasuj plik + użycie w GuideTab).
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Navigation, MapPin, Star, Globe, Phone, Clock, ChevronLeft, ChevronRight, Lightbulb, Mountain, Wallet, BookOpen, ExternalLink } from 'lucide-react'
 
 type Review = { author: string; rating: number | null; when: string; text: string }
@@ -74,7 +75,7 @@ export default function GuideDetailModal({
   const isTrail = place.category === 'trail'
   const hasAi = !!(ai.cena || ai.czas || ai.trasa || ai.trudnosc || (ai.tipy && ai.tipy.length))
 
-  return (
+  const overlay = (
     <div
       className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center"
       onClick={onClose}
@@ -273,4 +274,6 @@ export default function GuideDetailModal({
       </div>
     </div>
   )
+
+  return typeof document !== 'undefined' ? createPortal(overlay, document.body) : null
 }

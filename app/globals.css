@@ -73,3 +73,13 @@ body {
 /* Przewodnik: ukryty pasek przewijania slidera zdjęć (usuwalne z Przewodnikiem) */
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Przewodnik: animacja modala — wjazd z dołu, wyjazd górą (usuwalne z Przewodnikiem) */
+@keyframes guideSheetIn  { from { transform: translateY(100%);  opacity: 0.5; } to { transform: translateY(0); opacity: 1; } }
+@keyframes guideSheetOut { from { transform: translateY(0);     opacity: 1; }   to { transform: translateY(-100%); opacity: 0; } }
+@keyframes guideFadeIn   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes guideFadeOut  { from { opacity: 1; } to { opacity: 0; } }
+.guide-sheet-in  { animation: guideSheetIn  0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+.guide-sheet-out { animation: guideSheetOut 0.30s cubic-bezier(0.55, 0.06, 0.68, 0.19) both; }
+.guide-fade-in   { animation: guideFadeIn   0.26s ease both; }
+.guide-fade-out  { animation: guideFadeOut  0.28s ease both; }

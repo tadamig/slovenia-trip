@@ -44,6 +44,14 @@ export default function GuideDetailModal({
   const [err, setErr] = useState(false)
   const [hoursOpen, setHoursOpen] = useState(false)
   const sliderRef = useRef<HTMLDivElement>(null)
+  const [closing, setClosing] = useState(false)
+
+  // Zamknięcie z animacją wyjazdu górą, potem realne odmontowanie.
+  const requestClose = () => {
+    if (closing) return
+    setClosing(true)
+    setTimeout(onClose, 300)
+  }
 
   useEffect(() => {
     let cancel = false
@@ -86,11 +94,11 @@ export default function GuideDetailModal({
 
   const overlay = (
     <div
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center ${closing ? 'guide-fade-out' : 'guide-fade-in'}`}
+      onClick={requestClose}
     >
       <div
-        className="bg-stone-900 w-full sm:max-w-lg max-h-[92dvh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden border border-stone-700/50 shadow-2xl"
+        className={`bg-stone-900 w-full sm:max-w-lg max-h-[92dvh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden border border-stone-700/50 shadow-2xl ${closing ? 'guide-sheet-out' : 'guide-sheet-in'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Nagłówek — zawsze widoczny (X nie chowa się przy przewijaniu) */}
@@ -106,7 +114,7 @@ export default function GuideDetailModal({
               {dist != null && <span className="text-water-400">{dist < 10 ? dist.toFixed(1) : Math.round(dist)} km</span>}
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-stone-500 hover:text-stone-200 hover:bg-stone-800 flex-shrink-0">
+          <button onClick={requestClose} className="p-1.5 rounded-lg text-stone-500 hover:text-stone-200 hover:bg-stone-800 flex-shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>

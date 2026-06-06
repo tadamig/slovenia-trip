@@ -150,6 +150,32 @@ export type GuidePlace = {
   created_at: string
 }
 
+// ——— ASYSTENT AI (opcjonalny dodatek) ———
+// Wspólny czat pokoju. Patrz lib/featureFlags.ts (ASSISTANT_ENABLED).
+export type AssistantPlanStop = {
+  guide_place_id: string | null
+  name: string
+  lat: number | null
+  lon: number | null
+  place_id: string | null
+  note: string | null
+  duration_min: number | null
+}
+export type AssistantPlan = {
+  title: string | null
+  stops: AssistantPlanStop[]
+}
+export type AssistantMessage = {
+  id: string
+  room_id: string
+  role: 'user' | 'assistant'
+  content: string
+  plan: AssistantPlan | null
+  author_name: string | null
+  session_id: string | null
+  created_at: string
+}
+
 // ——— INTELIGENCJA DNIA (Faza 3) ———
 // Analiza AI (DeepSeek) + parking (Google Nearby + Brave) dla dnia planera.
 // Liczona na żądanie, cache'owana i współdzielona przez ekipę (realtime).

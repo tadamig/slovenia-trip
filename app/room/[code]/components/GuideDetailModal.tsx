@@ -56,10 +56,27 @@ export default function GuideDetailModal({
   }, [place.id])
 
   // zablokuj scroll tła
+  // Pewna blokada scrolla tła (działa też na iOS, gdzie samo overflow:hidden
+  // nie wystarcza i tło „ucieka" pod modalem). Zamrażamy body w pozycji fixed.
   useEffect(() => {
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
+    const b = document.body
+    const scrollY = window.scrollY
+    const prev = { position: b.style.position, top: b.style.top, left: b.style.left, right: b.style.right, width: b.style.width, overflow: b.style.overflow }
+    b.style.position = 'fixed'
+    b.style.top = `-${scrollY}px`
+    b.style.left = '0'
+    b.style.right = '0'
+    b.style.width = '100%'
+    b.style.overflow = 'hidden'
+    return () => {
+      b.style.position = prev.position
+      b.style.top = prev.top
+      b.style.left = prev.left
+      b.style.right = prev.right
+      b.style.width = prev.width
+      b.style.overflow = prev.overflow
+      window.scrollTo(0, scrollY)
+    }
   }, [])
 
   const scroll = (dir: number) => {
@@ -81,7 +98,7 @@ export default function GuideDetailModal({
       onClick={onClose}
     >
       <div
-        className="bg-stone-900 w-full sm:max-w-lg max-h-[92vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden border border-stone-700/50 shadow-2xl"
+        className="bg-stone-900 w-full sm:max-w-lg max-h-[92dvh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden border border-stone-700/50 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Nagłówek — zawsze widoczny (X nie chowa się przy przewijaniu) */}

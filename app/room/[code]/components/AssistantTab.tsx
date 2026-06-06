@@ -56,10 +56,10 @@ function RichText({ text }: { text: string }) {
   return <div className="space-y-1 text-sm text-stone-300">{blocks}</div>
 }
 
-function PlanBlock({ plan, room, addStop, maxDayIndex }: {
+function PlanBlock({ plan, room, addStops, maxDayIndex }: {
   plan: AssistantPlan
   room: Room
-  addStop: (_dayIndex: number, _stop: any) => Promise<void>
+  addStops: (_dayIndex: number, _stops: any[]) => Promise<void>
   maxDayIndex: number
 }) {
   const days = Math.max(1, tripDayCount(room, maxDayIndex, 0))
@@ -69,15 +69,13 @@ function PlanBlock({ plan, room, addStop, maxDayIndex }: {
   const add = async () => {
     if (state === 'adding') return
     setState('adding')
-    for (const s of plan.stops) {
-      await addStop(day - 1, {
-        place_name: s.name,
-        place_id: s.place_id ?? null,
-        lat: s.lat ?? null,
-        lon: s.lon ?? null,
-        duration_min: s.duration_min ?? null,
-      })
-    }
+    await addStops(day - 1, plan.stops.map((s) => ({
+      place_name: s.name,
+      place_id: s.place_id ?? null,
+      lat: s.lat ?? null,
+      lon: s.lon ?? null,
+      duration_min: s.duration_min ?? null,
+    })))
     setState('done')
   }
 
@@ -123,7 +121,7 @@ function PlanBlock({ plan, room, addStop, maxDayIndex }: {
 export default function AssistantTab({ room }: { room: Room }) {
   const sessionId = typeof window !== 'undefined' ? getSessionId() : ''
   const myName = (typeof window !== 'undefined' ? getSessionName() : '') || 'Ktoś'
-  const { items, addStop } = useItinerary(room.id, sessionId)
+  const { items, addStops } = useItinerary(room.id, sessionId)
   const maxDayIndex = useMemo(() => items.reduce((m, it) => Math.max(m, it.day_index), 0), [items])
 
   const [messages, setMessages] = useState<AssistantMessage[]>([])
@@ -233,7 +231,7 @@ export default function AssistantTab({ room }: { room: Room }) {
                 <div className="rounded-2xl rounded-tl-sm bg-stone-800/50 border border-stone-700/40 px-3 py-2">
                   <RichText text={m.content} />
                   {m.plan && m.plan.stops?.length > 0 && (
-                    <PlanBlock plan={m.plan} room={room} addStop={addStop} maxDayIndex={maxDayIndex} />
+                    <PlanBlock plan={m.plan} room={room} addStops={addStops} maxDayIndex={maxDayIndex} />
                   )}
                 </div>
               )}

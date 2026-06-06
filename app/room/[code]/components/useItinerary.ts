@@ -94,6 +94,35 @@ export function useItinerary(roomId: string, sessionId: string) {
     [roomId, sessionId, nextPosition],
   )
 
+  // Dodanie wielu przystanków naraz, z zachowaniem kolejności (rosnące position).
+  // Jeden insert — unika problemu nieświeżej pozycji przy pętli addStop.
+  const addStops = useCallback(
+    async (dayIndex: number, stops: NewStop[]) => {
+      if (!stops.length) return
+      lastLocalWrite.current = Date.now()
+      let pos = nextPosition(dayIndex)
+      const rows = stops.map((stop) => ({
+        room_id: roomId,
+        day_index: dayIndex,
+        position: pos++,
+        place_name: stop.place_name,
+        place_id: stop.place_id ?? null,
+        lat: stop.lat ?? null,
+        lon: stop.lon ?? null,
+        saved_place_id: stop.saved_place_id ?? null,
+        start_time: null as string | null,
+        duration_min: stop.duration_min ?? 90,
+        opening_hours: stop.opening_hours ?? null,
+        tags: stop.tags ?? [],
+        note: null as string | null,
+        session_id: sessionId,
+      }))
+      const { data } = await supabase.from('itinerary_items').insert(rows).select()
+      if (data) setItems((prev) => [...prev, ...(data as ItineraryItem[])])
+    },
+    [roomId, sessionId, nextPosition],
+  )
+
   const removeStop = useCallback(async (id: string) => {
     lastLocalWrite.current = Date.now()
     setItems((prev) => prev.filter((it) => it.id !== id))
@@ -156,5 +185,5 @@ export function useItinerary(roomId: string, sessionId: string) {
     [items, nextPosition],
   )
 
-  return { items, loading, addStop, removeStop, updateStop, moveWithinDay, moveToDay }
+  return { items, loading, addStop, addStops, removeStop, updateStop, moveWithinDay, moveToDay }
 }

@@ -21,6 +21,17 @@ const CATEGORIES: { key: string; label: string; emoji: string; color: string }[]
 ]
 const CAT = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]))
 
+// Normalizacja do wyszukiwania: małe litery + usunięcie znaków diakrytycznych
+// (č š ž ć ł đ ą ę itp.), żeby „logarska" znalazło „Logarską", a „vrsic" → „Vršič".
+function norm(s: string | null | undefined): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/đ/g, 'd')
+}
+
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -96,10 +107,15 @@ export default function GuideTab() {
     return c
   }, [places])
 
+  const searching = query.trim().length > 0
+
   const list = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    let arr = places.filter((p) => p.category === cat)
-    if (q) arr = arr.filter((p) => p.name.toLowerCase().includes(q))
+    const nq = norm(query.trim())
+    // Przy wpisanym tekście szukamy GLOBALNIE (wszystkie kategorie) po nazwie i opisie;
+    // bez tekstu pokazujemy wybraną kategorię.
+    const arr = nq
+      ? places.filter((p) => norm(p.name).includes(nq) || norm(p.description).includes(nq))
+      : places.filter((p) => p.category === cat)
     const withDist = arr.map((p) => ({
       p,
       dist: userPos && p.lat != null && p.lon != null ? haversineKm(userPos.lat, userPos.lon, p.lat, p.lon) : null,
@@ -119,13 +135,13 @@ export default function GuideTab() {
     if (!map || !mapReady) return
     Object.values(markersRef.current).forEach((m) => m.setMap(null))
     markersRef.current = {}
-    const meta = CAT[cat]
     const bounds = new google.maps.LatLngBounds()
     let any = false
     list.forEach(({ p }) => {
       if (p.lat == null || p.lon == null) return
       any = true
       bounds.extend({ lat: p.lat, lng: p.lon })
+      const meta = CAT[p.category]
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lon }, map,
         label: { text: meta?.emoji || '📍', fontSize: '14px' },
@@ -215,11 +231,11 @@ export default function GuideTab() {
         {CATEGORIES.map((c) => {
           const n = counts[c.key] || 0
           if (!n) return null
-          const on = cat === c.key
+          const on = !searching && cat === c.key
           return (
             <button
               key={c.key}
-              onClick={() => setCat(c.key)}
+              onClick={() => { setCat(c.key); setQuery('') }}
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                 on ? 'bg-forest-600 text-white border-forest-500' : 'bg-stone-800/60 text-stone-400 border-stone-700/40 hover:text-stone-200'
               }`}
@@ -236,10 +252,16 @@ export default function GuideTab() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Szukaj po nazwie…"
-          className="w-full bg-stone-800 border border-stone-700 rounded-xl pl-9 pr-3 py-2.5 text-stone-100 placeholder-stone-600 text-sm focus:outline-none focus:border-forest-500"
+          placeholder="Szukaj po nazwie lub opisie…"
+          className="w-full bg-stone-800 border border-stone-700 rounded-xl pl-9 pr-8 py-2.5 text-stone-100 placeholder-stone-600 text-sm focus:outline-none focus:border-forest-500"
         />
+        {searching && (
+          <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300 text-lg leading-none">×</button>
+        )}
       </div>
+      {searching && (
+        <p className="text-[11px] text-stone-500 -mt-1">Szukam we wszystkich kategoriach — znaleziono {list.length}</p>
+      )}
 
       {/* Lista */}
       {loading ? (
@@ -247,7 +269,7 @@ export default function GuideTab() {
           {[...Array(6)].map((_, i) => <div key={i} className="h-14 bg-stone-800/40 rounded-xl animate-pulse" />)}
         </div>
       ) : list.length === 0 ? (
-        <p className="text-stone-600 text-sm text-center py-8">Brak wyników w tej kategorii.</p>
+        <p className="text-stone-600 text-sm text-center py-8">{searching ? `Nic nie znaleziono dla „${query.trim()}".` : 'Brak wyników w tej kategorii.'}</p>
       ) : (
         <div className="space-y-1.5">
           {list.map(({ p, dist }) => (

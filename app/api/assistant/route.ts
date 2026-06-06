@@ -143,7 +143,8 @@ export async function POST(req: NextRequest) {
     `Zwróć WYŁĄCZNIE JSON w formacie:\n` +
     `{"reply": "<odpowiedź po polsku, markdown: krótkie akapity i listy zaczynane od '- '>", ` +
     `"plan": null | {"title": "<np. Dzień nad Bledem>", "stops": [{"ref": <numer #N z listy lub null>, "name": "<nazwa miejsca>", "note": "<krótko: co/dlaczego>", "duration_min": <liczba lub null>}]}}\n` +
-    `Jeśli pytanie nie dotyczy planu/trasy, ustaw "plan": null. W stops preferuj miejsca z listy (pole ref).\n\n` +
+    `Jeśli pytanie nie dotyczy planu/trasy, ustaw "plan": null. W stops preferuj miejsca z listy (pole ref).\n` +
+    `WAŻNE: w treści "reply" NIE pokazuj numerów #N — są tylko do pola plan.ref. Pisz same nazwy miejsc.\n\n` +
     `MIEJSCA Z PORADNIKA:\n${lines.join('\n')}`
 
   const msgs = [{ role: 'system', content: system }, ...history.map((m) => ({ role: m.role, content: m.content }))]

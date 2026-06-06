@@ -56,26 +56,18 @@ export default function GuideDetailModal({
   }, [place.id])
 
   // zablokuj scroll tła
-  // Pewna blokada scrolla tła (działa też na iOS, gdzie samo overflow:hidden
-  // nie wystarcza i tło „ucieka" pod modalem). Zamrażamy body w pozycji fixed.
+  // Blokada scrolla tła. UWAGA: aplikacja przewija się na WEWNĘTRZNYM kontenerze
+  // AppShell (div.overflow-y-auto.pb-28), a nie na oknie/body — więc to JEGO
+  // trzeba zablokować, inaczej tło „jedzie" razem z modalem (zwłaszcza na mobile).
   useEffect(() => {
-    const b = document.body
-    const scrollY = window.scrollY
-    const prev = { position: b.style.position, top: b.style.top, left: b.style.left, right: b.style.right, width: b.style.width, overflow: b.style.overflow }
-    b.style.position = 'fixed'
-    b.style.top = `-${scrollY}px`
-    b.style.left = '0'
-    b.style.right = '0'
-    b.style.width = '100%'
-    b.style.overflow = 'hidden'
+    const lockTargets: HTMLElement[] = []
+    const appScroller = document.querySelector('.overflow-y-auto.pb-28') as HTMLElement | null
+    if (appScroller) lockTargets.push(appScroller)
+    lockTargets.push(document.body)
+    const prev = lockTargets.map((el) => ({ el, overflow: el.style.overflow, overscroll: el.style.overscrollBehavior }))
+    lockTargets.forEach((el) => { el.style.overflow = 'hidden'; el.style.overscrollBehavior = 'none' })
     return () => {
-      b.style.position = prev.position
-      b.style.top = prev.top
-      b.style.left = prev.left
-      b.style.right = prev.right
-      b.style.width = prev.width
-      b.style.overflow = prev.overflow
-      window.scrollTo(0, scrollY)
+      prev.forEach(({ el, overflow, overscroll }) => { el.style.overflow = overflow; el.style.overscrollBehavior = overscroll })
     }
   }, [])
 

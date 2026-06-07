@@ -190,6 +190,12 @@ export default function AssistantTab({ room }: { room: Room }) {
   const [liveReply, setLiveReply] = useState('')
   const [detailPlace, setDetailPlace] = useState<GuideFallback | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const stickRef = useRef(true) // czy „przyklejać" widok do dołu (tylko gdy user jest przy dole)
+  const onScroll = () => {
+    const el = scrollAreaRef.current
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
 
   // Klik w przystanek planu → szczegóły miejsca (modal jak w Przewodniku) albo Google Maps.
   const openPlace = async (s: AssistantPlanStop) => {
@@ -224,7 +230,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id])
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages.length, sending, liveReply])
+  useEffect(() => { if (stickRef.current) bottomRef.current?.scrollIntoView({ block: 'end' }) }, [messages.length, sending, liveReply])
 
   const send = async (text: string) => {
     const q = text.trim()
@@ -233,6 +239,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     setSending(true)
     setSteps([])
     setLiveReply('')
+    stickRef.current = true // nowe pytanie → zjedź na dół
     // wstaw pytanie (wspólne, realtime)
     const { data: userRow } = await supabase
       .from('assistant_messages')
@@ -301,7 +308,7 @@ export default function AssistantTab({ room }: { room: Room }) {
         <p className="text-stone-500 text-xs mt-0.5">Pyta o Słowenię i miejsca z poradnika, ułoży plan dnia. Czat wspólny dla ekipy.</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4 min-h-0">
+      <div ref={scrollAreaRef} onScroll={onScroll} className="flex-1 overflow-y-auto overscroll-contain px-4 min-h-0">
       {messages.length === 0 && !sending && (
         <div className="mb-4">
           <p className="text-stone-500 text-xs mb-2">Na start, np.:</p>

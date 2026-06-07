@@ -1,10 +1,13 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader'
-import { supabase, GuidePlace } from '@/lib/supabase'
-import { MapPin, Navigation, Crosshair, Search, Star, Info } from 'lucide-react'
+import { supabase, GuidePlace, Room } from '@/lib/supabase'
+import { MapPin, Navigation, Crosshair, Search, Star, Info, Sparkles, X } from 'lucide-react'
 import GuideDetailModal from './GuideDetailModal'
+import AssistantTab from './AssistantTab'
+import { ASSISTANT_ENABLED } from '@/lib/featureFlags'
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 
@@ -43,7 +46,8 @@ const fmtKm = (km: number) => (km < 10 ? `${km.toFixed(1)} km` : `${Math.round(k
 const navUrl = (lat: number, lon: number) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`
 const viewUrl = (name: string, lat: number, lon: number) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}%20${lat},${lon}`
 
-export default function GuideTab() {
+export default function GuideTab({ room }: { room?: Room }) {
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const [places, setPlaces] = useState<GuidePlace[]>([])
   const [loading, setLoading] = useState(true)
   const [cat, setCat] = useState('attraction')
@@ -66,6 +70,15 @@ export default function GuideTab() {
       setLoading(false)
     })
   }, [])
+
+  // Blokada scrolla tła (kontener AppShell), gdy otwarty asystent.
+  useEffect(() => {
+    if (!assistantOpen) return
+    const sc = document.querySelector('.overflow-y-auto.pb-28') as HTMLElement | null
+    const prev = sc?.style.overflow ?? ''
+    if (sc) sc.style.overflow = 'hidden'
+    return () => { if (sc) sc.style.overflow = prev }
+  }, [assistantOpen])
 
   // Inicjalizacja mapy (raz).
   useEffect(() => {
@@ -324,6 +337,40 @@ export default function GuideTab() {
           catEmoji={CAT[detail.place.category]?.emoji || '📍'}
           onClose={() => setDetail(null)}
         />
+      )}
+
+      {/* Pływający dymek Asystenta — tylko w Przewodniku (prawy dolny róg) */}
+      {ASSISTANT_ENABLED && room && (
+        <>
+          <button
+            onClick={() => setAssistantOpen(true)}
+            aria-label="Asystent AI"
+            className="fixed bottom-24 right-4 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-forest-500 to-water-600 text-white shadow-[0_8px_24px_rgba(0,0,0,0.45)] border border-white/20 flex items-center justify-center active:scale-95 transition-transform"
+          >
+            <Sparkles className="w-6 h-6" />
+          </button>
+          {assistantOpen && createPortal(
+            <div
+              className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center guide-fade-in"
+              onClick={() => setAssistantOpen(false)}
+            >
+              <div
+                className="relative bg-stone-900 w-full sm:max-w-lg h-[88dvh] sm:h-[80dvh] sm:max-h-[680px] rounded-t-2xl sm:rounded-2xl border border-stone-700/50 shadow-2xl overflow-hidden guide-sheet-in"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => setAssistantOpen(false)}
+                  aria-label="Zamknij"
+                  className="absolute top-2.5 right-2.5 z-10 p-1.5 rounded-lg text-stone-400 hover:text-stone-100 hover:bg-stone-800"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <AssistantTab room={room} />
+              </div>
+            </div>,
+            document.body,
+          )}
+        </>
       )}
     </div>
   )

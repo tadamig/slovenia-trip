@@ -192,14 +192,15 @@ export default function AssistantTab({ room }: { room: Room }) {
   }
 
   return (
-    <div className="px-4 py-5 max-w-lg mx-auto">
-      <div className="mb-3">
+    <div className="flex flex-col h-full max-w-lg mx-auto w-full">
+      <div className="shrink-0 px-4 pt-4 pb-2">
         <h2 className="font-display text-lg font-semibold text-stone-100 flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-forest-400" /> Asystent
         </h2>
         <p className="text-stone-500 text-xs mt-0.5">Pyta o Słowenię i miejsca z poradnika, ułoży plan dnia. Czat wspólny dla ekipy.</p>
       </div>
 
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 min-h-0">
       {messages.length === 0 && !sending && (
         <div className="mb-4">
           <p className="text-stone-500 text-xs mb-2">Na start, np.:</p>
@@ -260,9 +261,10 @@ export default function AssistantTab({ room }: { room: Room }) {
         )}
         <div ref={bottomRef} />
       </div>
+      </div>
 
-      {/* Pole wpisywania */}
-      <div className="sticky bottom-[5.5rem] mt-4 bg-stone-950/80 backdrop-blur rounded-2xl">
+      {/* Pole wpisywania (przyklejone do dołu nakładki) */}
+      <div className="shrink-0 border-t border-stone-800 bg-stone-900 px-3 pt-2 pb-3">
         <div className="flex items-end gap-2 rounded-2xl border border-stone-700 bg-stone-800 p-1.5">
           <textarea
             value={input}

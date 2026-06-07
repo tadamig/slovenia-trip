@@ -5,11 +5,51 @@
 // Usuwalny: skasuj ten plik + /api/assistant + wpis w AppShell + DROP TABLE assistant_messages.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { supabase, Room, AssistantMessage, AssistantPlan } from '@/lib/supabase'
+import { setOptions, importLibrary } from '@googlemaps/js-api-loader'
+import { supabase, Room, AssistantMessage, AssistantPlan, AssistantPlanStop } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount } from './itineraryUtils'
-import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink } from 'lucide-react'
+import GuideDetailModal, { GuideFallback } from './GuideDetailModal'
+import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car } from 'lucide-react'
+
+const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
+const CATMAP: Record<string, { label: string; emoji: string }> = {
+  attraction: { label: 'Atrakcje', emoji: '🏛️' }, restaurant: { label: 'Restauracje', emoji: '🍴' },
+  beach: { label: 'Plaże', emoji: '🏖️' }, trail: { label: 'Szlaki', emoji: '🥾' },
+  wine: { label: 'Winiarnie', emoji: '🍷' }, camping: { label: 'Campingi', emoji: '⛺' },
+  lodging: { label: 'Noclegi', emoji: '🛏️' }, parking: { label: 'Parkingi', emoji: '🅿️' },
+}
+
+// Mini-mapa podglądu trasy planu (numerowane przystanki + linia).
+function MiniMap({ stops }: { stops: AssistantPlanStop[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const pts = stops.filter((s) => s.lat != null && s.lon != null)
+    if (!ref.current || !GMAPS_KEY || !pts.length) return
+    let cancel = false
+    setOptions({ key: GMAPS_KEY, v: 'weekly' })
+    importLibrary('maps').then(({ Map }) => {
+      if (cancel || !ref.current) return
+      const map = new Map(ref.current, { disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy' })
+      const bounds = new google.maps.LatLngBounds()
+      const path: google.maps.LatLngLiteral[] = []
+      pts.forEach((s, i) => {
+        const pos = { lat: s.lat as number, lng: s.lon as number }
+        bounds.extend(pos); path.push(pos)
+        new google.maps.Marker({
+          position: pos, map, title: s.name,
+          label: { text: String(i + 1), color: '#fff', fontSize: '12px', fontWeight: '600' },
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: '#3d7f41', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+        })
+      })
+      new google.maps.Polyline({ path, map, strokeColor: '#2cc4ff', strokeOpacity: 0.85, strokeWeight: 3 })
+      if (pts.length > 1) map.fitBounds(bounds, 30); else { map.setCenter(path[0]); map.setZoom(13) }
+    }).catch(() => {})
+    return () => { cancel = true }
+  }, [stops])
+  return <div ref={ref} className="w-full h-48 rounded-lg overflow-hidden border border-stone-700/40 mt-2" />
+}
 
 const SUGGESTIONS = [
   'Zaplanuj dzień w okolicy Bledu',
@@ -56,15 +96,17 @@ function RichText({ text }: { text: string }) {
   return <div className="space-y-1 text-sm text-stone-300">{blocks}</div>
 }
 
-function PlanBlock({ plan, room, addStops, maxDayIndex }: {
+function PlanBlock({ plan, room, addStops, maxDayIndex, onOpenPlace }: {
   plan: AssistantPlan
   room: Room
   addStops: (_dayIndex: number, _stops: any[]) => Promise<void>
   maxDayIndex: number
+  onOpenPlace: (_s: AssistantPlanStop) => void
 }) {
   const days = Math.max(1, tripDayCount(room, maxDayIndex, 0))
   const [day, setDay] = useState(1)
   const [state, setState] = useState<'idle' | 'adding' | 'done'>('idle')
+  const [showMap, setShowMap] = useState(false)
 
   const add = async () => {
     if (state === 'adding') return
@@ -82,15 +124,32 @@ function PlanBlock({ plan, room, addStops, maxDayIndex }: {
   return (
     <div className="mt-2 rounded-xl border border-forest-800/40 bg-forest-900/15 p-3">
       {plan.title && <p className="text-forest-300 text-xs font-semibold mb-1.5">🗺️ {plan.title}</p>}
-      <ol className="list-decimal pl-5 space-y-1 text-xs text-stone-300">
+      <ol className="space-y-1 text-xs text-stone-300">
         {plan.stops.map((s, i) => (
           <li key={i}>
-            <span className="text-stone-100 font-medium">{s.name}</span>
-            {s.duration_min ? <span className="text-stone-500"> · ~{s.duration_min} min</span> : null}
-            {s.note ? <span className="text-stone-400"> — {s.note}</span> : null}
+            {i > 0 && s.drive_min_from_prev ? (
+              <p className="text-[10px] text-stone-500 flex items-center gap-1 pl-1 my-0.5"><Car className="w-2.5 h-2.5" /> ~{s.drive_min_from_prev} min dojazdu</p>
+            ) : null}
+            <div className="flex items-start gap-1.5">
+              <span className="text-forest-400 font-semibold flex-shrink-0">{i + 1}.</span>
+              <div className="min-w-0">
+                <button onClick={() => onOpenPlace(s)} className="text-stone-100 font-medium text-left hover:text-water-300 inline-flex items-center gap-1">
+                  {s.name}{(s.guide_place_id || s.lat != null) && <Info className="w-3 h-3 text-stone-500 flex-shrink-0" />}
+                </button>
+                {s.duration_min ? <span className="text-stone-500"> · ~{s.duration_min} min</span> : null}
+                {s.note ? <span className="text-stone-400 block">{s.note}</span> : null}
+              </div>
+            </div>
           </li>
         ))}
       </ol>
+
+      {plan.stops.some((s) => s.lat != null) && (
+        <button onClick={() => setShowMap((v) => !v)} className="mt-2 text-[11px] text-water-400 hover:text-water-300 inline-flex items-center gap-1">
+          <MapIcon className="w-3.5 h-3.5" /> {showMap ? 'Ukryj mapę' : 'Pokaż na mapie'}
+        </button>
+      )}
+      {showMap && <MiniMap stops={plan.stops} />}
       <div className="flex items-center gap-2 mt-2.5">
         {state === 'done' ? (
           <span className="text-emerald-400 text-xs flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Dodano do Dnia {day}</span>
@@ -129,7 +188,22 @@ export default function AssistantTab({ room }: { room: Room }) {
   const [sending, setSending] = useState(false)
   const [steps, setSteps] = useState<{ icon: string; label: string }[]>([])
   const [liveReply, setLiveReply] = useState('')
+  const [detailPlace, setDetailPlace] = useState<GuideFallback | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Klik w przystanek planu → szczegóły miejsca (modal jak w Przewodniku) albo Google Maps.
+  const openPlace = async (s: AssistantPlanStop) => {
+    if (s.guide_place_id) {
+      const { data } = await supabase
+        .from('guide_places')
+        .select('id,name,category,description,lat,lon,google_rating,google_total_ratings')
+        .eq('id', s.guide_place_id).maybeSingle()
+      if (data) { setDetailPlace(data as unknown as GuideFallback); return }
+    }
+    if (s.lat != null && s.lon != null) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name)}%20${s.lat},${s.lon}`, '_blank')
+    }
+  }
 
   const load = async () => {
     const { data } = await supabase
@@ -259,7 +333,7 @@ export default function AssistantTab({ room }: { room: Room }) {
                 <div className="rounded-2xl rounded-tl-sm bg-stone-800/50 border border-stone-700/40 px-3 py-2">
                   <RichText text={m.content} />
                   {m.plan && m.plan.stops?.length > 0 && (
-                    <PlanBlock plan={m.plan} room={room} addStops={addStops} maxDayIndex={maxDayIndex} />
+                    <PlanBlock plan={m.plan} room={room} addStops={addStops} maxDayIndex={maxDayIndex} onOpenPlace={openPlace} />
                   )}
                   {m.sources && m.sources.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-stone-700/40">
@@ -335,6 +409,16 @@ export default function AssistantTab({ room }: { room: Room }) {
         </div>
         <p className="text-[10px] text-stone-600 text-center mt-1 px-2">AI może się mylić — zweryfikuj godziny, ceny i dojazd przed wyjazdem.</p>
       </div>
+
+      {detailPlace && (
+        <GuideDetailModal
+          place={detailPlace}
+          dist={null}
+          catLabel={CATMAP[detailPlace.category]?.label || detailPlace.category}
+          catEmoji={CATMAP[detailPlace.category]?.emoji || '📍'}
+          onClose={() => setDetailPlace(null)}
+        />
+      )}
     </div>
   )
 }

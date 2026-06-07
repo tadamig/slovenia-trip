@@ -160,6 +160,7 @@ export type AssistantPlanStop = {
   place_id: string | null
   note: string | null
   duration_min: number | null
+  drive_min_from_prev?: number | null
 }
 export type AssistantPlan = {
   title: string | null

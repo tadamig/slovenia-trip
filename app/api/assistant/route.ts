@@ -225,6 +225,55 @@ async function routeInfo(args: any): Promise<string> {
   return `Dojazd autem ${a.label} → ${b.label}: ~${Math.round(km / 65 * 60)} min, ~${km.toFixed(0)} km (szacunkowo).`
 }
 
+// Budowa planu (stops) z argumentów propose_plan — wzbogaca o współrzędne z poradnika.
+function buildPlanFromArgs(a: any, places: GuidePlace[]): { title: string | null; stops: any[] } | null {
+  const stops = (Array.isArray(a?.stops) ? a.stops : []).map((st: any) => {
+    const byId = st.guide_place_id ? places.find((p) => p.id === st.guide_place_id) : null
+    const byName = !byId && st.name ? places.find((p) => norm(p.name) === norm(st.name)) : null
+    const p = byId || byName
+    return {
+      guide_place_id: p?.id || null, name: p?.name || String(st.name || '').slice(0, 120),
+      lat: p?.lat ?? null, lon: p?.lon ?? null, place_id: p?.google_place_id ?? null,
+      note: st.note ? String(st.note).slice(0, 200) : null,
+      duration_min: Number.isFinite(st.duration_min) ? Math.max(15, Math.min(480, st.duration_min)) : null,
+    }
+  }).filter((s: any) => s.name)
+  if (!stops.length) return null
+  return { title: a?.title ? String(a.title).slice(0, 80) : null, stops }
+}
+
+function looksLikePlan(s: string): boolean {
+  const n = norm(s)
+  return ['plan', 'zaplanuj', 'uloz', 'rozpisz', 'tras', 'itinerar', 'rozplanuj', 'rozkmin'].some((k) => n.includes(k))
+}
+
+// Wymuszone wyodrębnienie planu, gdy model napisał go prozą, ale nie wywołał propose_plan.
+async function forcePlan(messages: any[], places: GuidePlace[]): Promise<{ title: string | null; stops: any[] } | null> {
+  const tool = TOOLS.find((t) => t.function.name === 'propose_plan')
+  if (!tool) return null
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 30000)
+  try {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat', temperature: 0.2, max_tokens: 800,
+        tools: [tool], tool_choice: { type: 'function', function: { name: 'propose_plan' } },
+        messages: [...messages, { role: 'user', content: 'Zwróć teraz ten plan przez narzędzie propose_plan: uporządkowane przystanki w kolejności zwiedzania, z ref/id z wcześniejszych wyników search_guide jeśli to miejsca z poradnika.' }],
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    const tc = data?.choices?.[0]?.message?.tool_calls?.[0]
+    if (!tc) return null
+    let args: any = {}
+    try { args = JSON.parse(tc.function.arguments || '{}') } catch { return null }
+    return buildPlanFromArgs(args, places)
+  } catch { return null } finally { clearTimeout(t) }
+}
+
 // Strumieniowe wywołanie DeepSeek. Forwarduje deltę tekstu przez onDelta
 // (do streamingu odpowiedzi na żywo) i składa tool_calls z fragmentów.
 // Czas dojazdu autem (minuty) między współrzędnymi — Google Routes, fallback haversine.
@@ -310,6 +359,7 @@ export async function POST(req: NextRequest) {
   const roomId = body?.roomId || ''
   const history: { role: string; content: string }[] = Array.isArray(body?.messages) ? body.messages.slice(-8) : []
   if (!history.length) return new Response('empty', { status: 400 })
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')?.content || ''
 
   // —— Kontekst wyprawy ——
   let ctx = ''
@@ -417,19 +467,9 @@ export async function POST(req: NextRequest) {
               result = await routeInfo(a)
             } else if (fn === 'propose_plan') {
               send({ type: 'step', icon: '🗺️', label: 'Układam plan' })
-              const stops = (Array.isArray(a.stops) ? a.stops : []).map((st: any) => {
-                const byId = st.guide_place_id ? places.find((p) => p.id === st.guide_place_id) : null
-                const byName = !byId && st.name ? places.find((p) => norm(p.name) === norm(st.name)) : null
-                const p = byId || byName
-                return {
-                  guide_place_id: p?.id || null, name: p?.name || String(st.name || '').slice(0, 120),
-                  lat: p?.lat ?? null, lon: p?.lon ?? null, place_id: p?.google_place_id ?? null,
-                  note: st.note ? String(st.note).slice(0, 200) : null,
-                  duration_min: Number.isFinite(st.duration_min) ? Math.max(15, Math.min(480, st.duration_min)) : null,
-                }
-              }).filter((s: any) => s.name)
-              if (stops.length) plan = { title: a.title ? String(a.title).slice(0, 80) : null, stops }
-              result = 'Plan zapisany — przedstaw go też zwięźle w odpowiedzi.'
+              const built = buildPlanFromArgs(a, places)
+              if (built) plan = built
+              result = built ? 'Plan zapisany — przedstaw go też zwięźle w odpowiedzi.' : 'Nie udało się zbudować planu.'
             } else {
               result = 'Nieznane narzędzie.'
             }
@@ -444,6 +484,12 @@ export async function POST(req: NextRequest) {
           reply = (finalMsg?.content || '').trim()
         }
         if (!reply) reply = 'Nie udało się teraz odpowiedzieć. Spróbuj ponownie.'
+        // Fallback: pytanie wygląda na plan, a model nie wywołał propose_plan → wymuś.
+        if (!plan && looksLikePlan(lastUser)) {
+          send({ type: 'step', icon: '🗺️', label: 'Układam plan' })
+          const fp = await forcePlan(conversation, places)
+          if (fp) plan = fp
+        }
         // Dolicz czasy dojazdu między kolejnymi przystankami planu (do podglądu trasy).
         if (plan && Array.isArray(plan.stops) && plan.stops.length > 1 && plan.stops.length <= 12) {
           const segs = plan.stops.map((s: any, i: number) => {

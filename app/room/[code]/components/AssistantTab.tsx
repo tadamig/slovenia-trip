@@ -128,6 +128,7 @@ export default function AssistantTab({ room }: { room: Room }) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [steps, setSteps] = useState<{ icon: string; label: string }[]>([])
+  const [liveReply, setLiveReply] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const load = async () => {
@@ -149,7 +150,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.id])
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages.length, sending])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages.length, sending, liveReply])
 
   const send = async (text: string) => {
     const q = text.trim()
@@ -157,6 +158,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     setInput('')
     setSending(true)
     setSteps([])
+    setLiveReply('')
     // wstaw pytanie (wspólne, realtime)
     const { data: userRow } = await supabase
       .from('assistant_messages')
@@ -195,6 +197,7 @@ export default function AssistantTab({ room }: { room: Room }) {
             try {
               const ev = JSON.parse(line)
               if (ev.type === 'step') setSteps((p) => [...p, { icon: ev.icon || '•', label: ev.label || '' }])
+              else if (ev.type === 'delta') setLiveReply((p) => p + (ev.text || ''))
               else if (ev.type === 'done') { reply = ev.reply || ''; plan = ev.plan || null; sources = (ev.sources && ev.sources.length) ? ev.sources : null }
             } catch { /* pomiń niekompletną linię */ }
           }
@@ -211,6 +214,7 @@ export default function AssistantTab({ room }: { room: Room }) {
       .select().single()
     if (botRow) setMessages((p) => [...p, botRow as AssistantMessage])
     setSteps([])
+    setLiveReply('')
     setSending(false)
   }
 
@@ -286,13 +290,9 @@ export default function AssistantTab({ room }: { room: Room }) {
               <Bot className="w-4 h-4 text-forest-300" />
             </div>
             <div className="rounded-2xl rounded-tl-sm bg-stone-800/50 border border-stone-700/40 px-3 py-2.5 min-w-0">
-              {steps.length === 0 ? (
-                <span className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                </span>
-              ) : (
+              {liveReply ? (
+                <RichText text={liveReply} />
+              ) : steps.length > 0 ? (
                 <div className="space-y-1">
                   {steps.map((s, i) => (
                     <p key={i} className={`text-xs flex items-start gap-1.5 ${i === steps.length - 1 ? 'text-stone-300' : 'text-stone-500'}`}>
@@ -300,6 +300,12 @@ export default function AssistantTab({ room }: { room: Room }) {
                     </p>
                   ))}
                 </div>
+              ) : (
+                <span className="flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                </span>
               )}
             </div>
           </div>

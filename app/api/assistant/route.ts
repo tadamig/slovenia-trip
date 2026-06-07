@@ -225,20 +225,58 @@ async function routeInfo(args: any): Promise<string> {
   return `Dojazd autem ${a.label} → ${b.label}: ~${Math.round(km / 65 * 60)} min, ~${km.toFixed(0)} km (szacunkowo).`
 }
 
-async function deepseekTurn(messages: any[], tools: any[]): Promise<any> {
+// Strumieniowe wywołanie DeepSeek. Forwarduje deltę tekstu przez onDelta
+// (do streamingu odpowiedzi na żywo) i składa tool_calls z fragmentów.
+async function deepseekStream(messages: any[], tools: any[], onDelta: (_t: string) => void): Promise<{ role: string; content: string | null; tool_calls?: any[] }> {
   const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), 45000)
+  const t = setTimeout(() => controller.abort(), 50000)
   try {
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', temperature: 0.4, max_tokens: 1200, tools, tool_choice: 'auto', messages }),
+      body: JSON.stringify({
+        model: 'deepseek-chat', temperature: 0.4, max_tokens: 1200, stream: true,
+        tools: tools.length ? tools : undefined, tool_choice: tools.length ? 'auto' : undefined, messages,
+      }),
       signal: controller.signal,
     })
-    if (!res.ok) return null
-    const data = await res.json()
-    return data?.choices?.[0]?.message || null
-  } catch { return null } finally { clearTimeout(t) }
+    if (!res.ok || !res.body) return { role: 'assistant', content: '' }
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = '', content = ''
+    const tcs: any[] = []
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line.startsWith('data:')) continue
+        const payload = line.slice(5).trim()
+        if (!payload || payload === '[DONE]') continue
+        let j: any
+        try { j = JSON.parse(payload) } catch { continue }
+        const d = j?.choices?.[0]?.delta
+        if (!d) continue
+        if (d.content) { content += d.content; onDelta(d.content) }
+        if (Array.isArray(d.tool_calls)) {
+          for (const tc of d.tool_calls) {
+            const i = tc.index || 0
+            tcs[i] = tcs[i] || { id: '', type: 'function', function: { name: '', arguments: '' } }
+            if (tc.id) tcs[i].id = tc.id
+            if (tc.function?.name) tcs[i].function.name = tc.function.name
+            if (tc.function?.arguments) tcs[i].function.arguments += tc.function.arguments
+          }
+        }
+      }
+    }
+    const calls = tcs.filter(Boolean)
+    return { role: 'assistant', content: content || null, tool_calls: calls.length ? calls : undefined }
+  } catch {
+    return { role: 'assistant', content: '' }
+  } finally { clearTimeout(t) }
 }
 
 const TOOLS = [
@@ -309,13 +347,14 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (o: any) => controller.enqueue(encoder.encode(JSON.stringify(o) + '\n'))
+      const toolCache = new Map<string, string>() // cache wyników narzędzi w obrębie jednej odpowiedzi
       const sources: { title: string; url: string }[] = []
       let plan: any = null
       let reply = ''
 
       try {
         for (let round = 0; round < 5; round++) {
-          const msg = await deepseekTurn(conversation, TOOLS)
+          const msg = await deepseekStream(conversation, TOOLS, (txt) => send({ type: 'delta', text: txt }))
           if (!msg) break
           const calls = msg.tool_calls || []
           if (!calls.length) { reply = (msg.content || '').trim(); break }
@@ -324,8 +363,11 @@ export async function POST(req: NextRequest) {
             let a: any = {}
             try { a = JSON.parse(tc.function.arguments || '{}') } catch { a = {} }
             const fn = tc.function.name
+            const ckey = fn + '|' + JSON.stringify(a)
             let result = ''
-            if (fn === 'get_weather') {
+            if (fn !== 'propose_plan' && toolCache.has(ckey)) {
+              result = toolCache.get(ckey) as string
+            } else if (fn === 'get_weather') {
               send({ type: 'step', icon: '🌤️', label: `Sprawdzam pogodę: ${a.place || ''}` })
               result = await getWeather(a)
             } else if (fn === 'search_web') {
@@ -366,13 +408,14 @@ export async function POST(req: NextRequest) {
             } else {
               result = 'Nieznane narzędzie.'
             }
+            if (fn !== 'propose_plan') toolCache.set(ckey, result)
             conversation.push({ role: 'tool', tool_call_id: tc.id, content: result.slice(0, 4000) })
           }
         }
         if (!reply) {
           // wymuś końcową odpowiedź bez narzędzi
           send({ type: 'step', icon: '✍️', label: 'Składam odpowiedź' })
-          const finalMsg = await deepseekTurn([...conversation, { role: 'user', content: 'Podsumuj odpowiedź po polsku na podstawie zebranych informacji.' }], [])
+          const finalMsg = await deepseekStream([...conversation, { role: 'user', content: 'Podsumuj odpowiedź po polsku na podstawie zebranych informacji.' }], [], (txt) => send({ type: 'delta', text: txt }))
           reply = (finalMsg?.content || '').trim()
         }
         if (!reply) reply = 'Nie udało się teraz odpowiedzieć. Spróbuj ponownie.'

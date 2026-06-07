@@ -35,14 +35,16 @@ export function isSearchConfigured(): boolean {
  * @param query  zapytanie (np. "best SUP lakes near Bled blog")
  * @param limit  ile wyników (Brave: max 20 na zapytanie)
  */
-export async function searchWeb(query: string, limit = 8): Promise<WebResult[]> {
+export async function searchWeb(query: string, limit = 8, freshness?: string): Promise<WebResult[]> {
   if (!isSearchConfigured() || !query.trim()) return []
   const count = Math.max(1, Math.min(20, limit))
+  // freshness: 'pd'|'pw'|'pm'|'py' (dzień/tydzień/miesiąc/rok) — pod wydarzenia/aktualności
+  const fresh = ['pd', 'pw', 'pm', 'py'].includes(freshness || '') ? `&freshness=${freshness}` : ''
   try {
     const url =
       `https://api.search.brave.com/res/v1/web/search` +
       `?q=${encodeURIComponent(query)}` +
-      `&count=${count}`
+      `&count=${count}${fresh}`
     const res = await fetch(url, {
       headers: {
         Accept: 'application/json',

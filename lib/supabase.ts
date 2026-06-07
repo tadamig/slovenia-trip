@@ -165,12 +165,14 @@ export type AssistantPlan = {
   title: string | null
   stops: AssistantPlanStop[]
 }
+export type AssistantSource = { title: string; url: string }
 export type AssistantMessage = {
   id: string
   room_id: string
   role: 'user' | 'assistant'
   content: string
   plan: AssistantPlan | null
+  sources: AssistantSource[] | null
   author_name: string | null
   session_id: string | null
   created_at: string

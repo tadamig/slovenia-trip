@@ -9,7 +9,7 @@ import { supabase, Room, AssistantMessage, AssistantPlan } from '@/lib/supabase'
 import { getSessionId, getSessionName } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount } from './itineraryUtils'
-import { Sparkles, Send, CalendarPlus, Check, Bot, User } from 'lucide-react'
+import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink } from 'lucide-react'
 
 const SUGGESTIONS = [
   'Zaplanuj dzień w okolicy Bledu',
@@ -127,6 +127,7 @@ export default function AssistantTab({ room }: { room: Room }) {
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [steps, setSteps] = useState<{ icon: string; label: string }[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const load = async () => {
@@ -155,6 +156,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     if (!q || sending) return
     setInput('')
     setSending(true)
+    setSteps([])
     // wstaw pytanie (wspólne, realtime)
     const { data: userRow } = await supabase
       .from('assistant_messages')
@@ -169,15 +171,35 @@ export default function AssistantTab({ room }: { room: Room }) {
 
     let reply = ''
     let plan: AssistantPlan | null = null
+    let sources: { title: string; url: string }[] | null = null
     try {
       const res = await fetch('/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: room.id, messages: history }),
       })
-      const d = await res.json()
-      reply = d?.reply || ''
-      plan = d?.plan || null
+      // strumień NDJSON: kroki na żywo + finalne „done"
+      const reader = res.body?.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      if (reader) {
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          let nl
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim()
+            buf = buf.slice(nl + 1)
+            if (!line) continue
+            try {
+              const ev = JSON.parse(line)
+              if (ev.type === 'step') setSteps((p) => [...p, { icon: ev.icon || '•', label: ev.label || '' }])
+              else if (ev.type === 'done') { reply = ev.reply || ''; plan = ev.plan || null; sources = (ev.sources && ev.sources.length) ? ev.sources : null }
+            } catch { /* pomiń niekompletną linię */ }
+          }
+        }
+      }
     } catch {
       reply = ''
     }
@@ -185,9 +207,10 @@ export default function AssistantTab({ room }: { room: Room }) {
 
     const { data: botRow } = await supabase
       .from('assistant_messages')
-      .insert({ room_id: room.id, role: 'assistant', content: reply, plan })
+      .insert({ room_id: room.id, role: 'assistant', content: reply, plan, sources })
       .select().single()
     if (botRow) setMessages((p) => [...p, botRow as AssistantMessage])
+    setSteps([])
     setSending(false)
   }
 
@@ -234,6 +257,18 @@ export default function AssistantTab({ room }: { room: Room }) {
                   {m.plan && m.plan.stops?.length > 0 && (
                     <PlanBlock plan={m.plan} room={room} addStops={addStops} maxDayIndex={maxDayIndex} />
                   )}
+                  {m.sources && m.sources.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-stone-700/40">
+                      <p className="text-[10px] text-stone-500 mb-1">Źródła:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.sources.map((s, i) => (
+                          <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-water-400 hover:text-water-300 inline-flex items-center gap-1 bg-stone-800/60 border border-stone-700/40 rounded-full px-2 py-0.5 max-w-[200px]">
+                            <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" /> <span className="truncate">{s.title}</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -250,12 +285,22 @@ export default function AssistantTab({ room }: { room: Room }) {
             <div className="w-7 h-7 rounded-full bg-forest-700/40 border border-forest-700/50 flex items-center justify-center flex-shrink-0">
               <Bot className="w-4 h-4 text-forest-300" />
             </div>
-            <div className="rounded-2xl rounded-tl-sm bg-stone-800/50 border border-stone-700/40 px-3 py-2.5">
-              <span className="flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </span>
+            <div className="rounded-2xl rounded-tl-sm bg-stone-800/50 border border-stone-700/40 px-3 py-2.5 min-w-0">
+              {steps.length === 0 ? (
+                <span className="flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                </span>
+              ) : (
+                <div className="space-y-1">
+                  {steps.map((s, i) => (
+                    <p key={i} className={`text-xs flex items-start gap-1.5 ${i === steps.length - 1 ? 'text-stone-300' : 'text-stone-500'}`}>
+                      <span className="flex-shrink-0">{s.icon}</span> <span className="break-words">{s.label}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

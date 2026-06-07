@@ -46,7 +46,7 @@ const fmtKm = (km: number) => (km < 10 ? `${km.toFixed(1)} km` : `${Math.round(k
 const navUrl = (lat: number, lon: number) => `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`
 const viewUrl = (name: string, lat: number, lon: number) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}%20${lat},${lon}`
 
-export default function GuideTab({ room }: { room?: Room }) {
+export default function GuideTab({ room, active = true }: { room?: Room; active?: boolean }) {
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [places, setPlaces] = useState<GuidePlace[]>([])
   const [loading, setLoading] = useState(true)
@@ -339,8 +339,10 @@ export default function GuideTab({ room }: { room?: Room }) {
         />
       )}
 
-      {/* Pływający dymek Asystenta — tylko w Przewodniku (prawy dolny róg) */}
-      {ASSISTANT_ENABLED && room && (
+      {/* Pływający dymek Asystenta — tylko na aktywnej zakładce Przewodnik.
+          Portal do body, by position:fixed przyklejało się do ekranu (nie do
+          transformowanego panelu zakładki). */}
+      {ASSISTANT_ENABLED && room && active && typeof document !== 'undefined' && createPortal(
         <>
           <button
             onClick={() => setAssistantOpen(true)}
@@ -349,7 +351,7 @@ export default function GuideTab({ room }: { room?: Room }) {
           >
             <Sparkles className="w-6 h-6" />
           </button>
-          {assistantOpen && createPortal(
+          {assistantOpen && (
             <div
               className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center guide-fade-in"
               onClick={() => setAssistantOpen(false)}
@@ -367,10 +369,10 @@ export default function GuideTab({ room }: { room?: Room }) {
                 </button>
                 <AssistantTab room={room} />
               </div>
-            </div>,
-            document.body,
+            </div>
           )}
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )

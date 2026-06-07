@@ -130,7 +130,7 @@ export default function AppShell({ room, myPrefs, allPrefs, onReloadPrefs, prefe
           </div>
           {GUIDE_ENABLED && (
             <div ref={setPanelRef('guide')} style={panelStyle('guide')}>
-              {visited.guide && <GuideTab room={room} />}
+              {visited.guide && <GuideTab room={room} active={activeTab === 'guide'} />}
             </div>
           )}
         </div>

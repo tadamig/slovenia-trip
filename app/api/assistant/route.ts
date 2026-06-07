@@ -388,10 +388,12 @@ export async function POST(req: NextRequest) {
       parts.push(`Aktualny plan dni:\n${days.join('\n')}`)
     }
     // Pogoda na termin wyprawy zawsze w kontekście (żeby asystent „widział" pogodę bez pytania).
-    if (room?.start_date && room?.start_city) {
+    // Liczona dla CELU wyprawy (end_city), nie miasta startowego — np. Ljubljana, nie Rzeszów.
+    const wxCity = room?.end_city || room?.start_city
+    if (room?.start_date && wxCity) {
       try {
-        const w = await getWeather({ place: `${room.start_city}, ${room.country || 'Slovenia'}`, start_date: room.start_date, end_date: room.end_date || room.start_date })
-        if (w && !/Brak|Błąd|Nie udało/.test(w)) parts.push('POGODA NA TERMIN WYPRAWY:\n' + w)
+        const w = await getWeather({ place: `${wxCity}, ${room.country || 'Slovenia'}`, start_date: room.start_date, end_date: room.end_date || room.start_date })
+        if (w && !/Brak|Błąd|Nie udało/.test(w)) parts.push(`POGODA NA TERMIN WYPRAWY (${wxCity}):\n` + w)
       } catch { /* opcjonalne */ }
     }
     ctx = parts.join('\n')
@@ -400,7 +402,7 @@ export async function POST(req: NextRequest) {
   const system =
     `Jesteś researcherem-asystentem podróży po Słowenii dla naszej ekipy (wyprawa vanem). Odpowiadasz po polsku, ` +
     `konkretnie i przyjaźnie. Masz narzędzia do ŚWIEŻYCH danych — KORZYSTAJ z nich, zamiast zgadywać:\n` +
-    `• get_weather — gdy plan/pytanie dotyczy konkretnych dni lub doboru atrakcji pod pogodę,\n` +
+    `• get_weather — pogoda; jeśli w kontekście brak bloku „POGODA NA TERMIN" albo pytają o inne miejsce/dni, ZAWSZE sprawdź narzędziem. NIGDY nie pisz „pogoda niedostępna" bez wcześniejszego wywołania get_weather,\n` +
     `• search_web — blogi, wydarzenia/festiwale, aktualne tipy, czasowe zamknięcia (do aktualności użyj freshness),\n` +
     `• search_guide — nasze sprawdzone miejsca z poradnika (preferuj je; używaj ich id),\n` +
     `• place_details — godziny otwarcia, ceny, oceny,\n` +

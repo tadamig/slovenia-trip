@@ -11,7 +11,7 @@ import { getSessionId, getSessionName } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount } from './itineraryUtils'
 import GuideDetailModal, { GuideFallback } from './GuideDetailModal'
-import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car } from 'lucide-react'
+import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car, Trash2 } from 'lucide-react'
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 const CATMAP: Record<string, { label: string; emoji: string }> = {
@@ -211,6 +211,14 @@ export default function AssistantTab({ room }: { room: Room }) {
     }
   }
 
+  // Reset wspólnego czatu (czyści dla całej ekipy; realtime usunie u innych).
+  const resetChat = async () => {
+    if (sending) return
+    if (!window.confirm('Wyczyścić cały czat asystenta? Zniknie dla całej ekipy.')) return
+    setMessages([])
+    await supabase.from('assistant_messages').delete().eq('room_id', room.id)
+  }
+
   const load = async () => {
     const { data } = await supabase
       .from('assistant_messages')
@@ -302,9 +310,16 @@ export default function AssistantTab({ room }: { room: Room }) {
   return (
     <div className="flex flex-col h-full max-w-lg mx-auto w-full">
       <div className="shrink-0 px-4 pt-4 pb-2">
-        <h2 className="font-display text-lg font-semibold text-stone-100 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-forest-400" /> Asystent
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold text-stone-100 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-forest-400" /> Asystent
+          </h2>
+          {messages.length > 0 && (
+            <button onClick={resetChat} disabled={sending} title="Wyczyść czat" className="text-stone-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-stone-800 disabled:opacity-40 transition-colors">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
         <p className="text-stone-500 text-xs mt-0.5">Pyta o Słowenię i miejsca z poradnika, ułoży plan dnia. Czat wspólny dla ekipy.</p>
       </div>
 

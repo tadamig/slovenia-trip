@@ -204,6 +204,7 @@ export default function AssistantTab({ room }: { room: Room }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true) // czy „przyklejać" widok do dołu (tylko gdy user jest przy dole)
+  const lastLocalWrite = useRef(0) // pomija echo realtime po własnym zapisie (żeby nie gubić optymistycznych wiadomości)
   const onScroll = () => {
     const el = scrollAreaRef.current
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
@@ -227,6 +228,7 @@ export default function AssistantTab({ room }: { room: Room }) {
   const resetChat = async () => {
     if (sending) return
     if (!window.confirm('Wyczyścić cały czat asystenta? Zniknie dla całej ekipy.')) return
+    lastLocalWrite.current = Date.now()
     setMessages([])
     await supabase.from('assistant_messages').delete().eq('room_id', room.id)
   }
@@ -244,7 +246,10 @@ export default function AssistantTab({ room }: { room: Room }) {
     load()
     const ch = supabase
       .channel(`assistant:${room.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'assistant_messages', filter: `room_id=eq.${room.id}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assistant_messages', filter: `room_id=eq.${room.id}` }, () => {
+        if (Date.now() - lastLocalWrite.current < 1500) return // pomiń echo własnego zapisu
+        load()
+      })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,6 +265,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     setSteps([])
     setLiveReply('')
     stickRef.current = true // nowe pytanie → zjedź na dół
+    lastLocalWrite.current = Date.now()
     // wstaw pytanie (wspólne, realtime)
     const { data: userRow } = await supabase
       .from('assistant_messages')
@@ -309,6 +315,7 @@ export default function AssistantTab({ room }: { room: Room }) {
     }
     if (!reply) reply = 'Nie udało się teraz odpowiedzieć. Spróbuj ponownie za chwilę.'
 
+    lastLocalWrite.current = Date.now()
     const { data: botRow } = await supabase
       .from('assistant_messages')
       .insert({ room_id: room.id, role: 'assistant', content: reply, plan, sources })

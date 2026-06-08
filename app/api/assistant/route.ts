@@ -383,6 +383,7 @@ const TOOLS = [
   { type: 'function', function: { name: 'place_details', description: 'Szczegóły miejsca: godziny otwarcia, cena, oceny, www, telefon, tipy.', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'read_url', description: 'Pobiera i czyta treść konkretnej strony (np. obiecujący wynik z search_web), gdy potrzebujesz szczegółów: program wydarzenia, ceny biletów, opis trasy/dojazdu.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
   { type: 'function', function: { name: 'route_info', description: 'Czas i dystans dojazdu autem między dwoma miejscami — do oceny realności planu. from/to: nazwa miejsca lub id z search_guide.', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
+  { type: 'function', function: { name: 'nearby', description: 'Miejsca z poradnika NAJBLIŻEJ aktualnej lokalizacji użytkownika (lub podanych współrzędnych), posortowane wg odległości w km. Użyj gdy pyta „co blisko mnie", „najbliższa restauracja/atrakcja", „co tu w okolicy".', parameters: { type: 'object', properties: { category: { type: 'string', enum: ['attraction', 'restaurant', 'beach', 'trail', 'wine', 'camping', 'lodging', 'parking'] }, radius_km: { type: 'number', description: 'maks. promień (domyślnie 40)' }, lat: { type: 'number' }, lon: { type: 'number' } } } } },
   { type: 'function', function: { name: 'propose_plan', description: 'OBOWIĄZKOWE przy prośbie o plan/trasę — zgłoś gotowy plan dnia (kolejność zwiedzania). Bez tego użytkownik nie dostanie planu. Nie licz dojazdów przez route_info — czasy dodamy automatycznie.', parameters: { type: 'object', properties: { title: { type: 'string' }, stops: { type: 'array', items: { type: 'object', properties: { guide_place_id: { type: 'string', description: 'id z search_guide, jeśli to miejsce z poradnika' }, name: { type: 'string' }, note: { type: 'string' }, duration_min: { type: 'number' } }, required: ['name'] } } }, required: ['stops'] } } },
 ]
 
@@ -393,6 +394,8 @@ export async function POST(req: NextRequest) {
   const history: { role: string; content: string }[] = Array.isArray(body?.messages) ? body.messages.slice(-8) : []
   if (!history.length) return new Response('empty', { status: 400 })
   const lastUser = [...history].reverse().find((m) => m.role === 'user')?.content || ''
+  const userLoc = body?.loc && Number.isFinite(body.loc.lat) && Number.isFinite(body.loc.lon)
+    ? { lat: Number(body.loc.lat), lon: Number(body.loc.lon) } : null
 
   // —— Kontekst wyprawy ——
   let ctx = ''
@@ -429,6 +432,16 @@ export async function POST(req: NextRequest) {
         if (w && !/Brak|Błąd|Nie udało/.test(w)) parts.push(`POGODA NA TERMIN WYPRAWY (${wxCity}):\n` + w)
       } catch { /* opcjonalne */ }
     }
+    // Aktualna lokalizacja użytkownika (GPS z przeglądarki) → kontekst tekstowy + nazwa najbliższego miejsca.
+    if (userLoc) {
+      let near = ''
+      try {
+        const gp = await loadGuide()
+        const n = gp.filter((p) => p.lat != null && p.lon != null).map((p) => ({ p, d: haversineKm(userLoc, { lat: p.lat as number, lon: p.lon as number }) })).sort((a, b) => a.d - b.d)[0]
+        if (n) near = ` (najbliżej: ${n.p.name}, ~${Math.round(n.d)} km)`
+      } catch { /* ignore */ }
+      parts.push(`AKTUALNA LOKALIZACJA UŻYTKOWNIKA: ${userLoc.lat.toFixed(4)}, ${userLoc.lon.toFixed(4)}${near}. Gdy pyta „blisko mnie"/„stąd"/„najbliższe", użyj narzędzia nearby oraz tej lokalizacji w route_info/get_weather.`)
+    }
     ctx = parts.join('\n')
   } catch { /* kontekst opcjonalny */ }
 
@@ -438,6 +451,7 @@ export async function POST(req: NextRequest) {
     `• get_weather — pogoda DLA KONKRETNEGO miejsca i dnia. Sprawdzaj pogodę dla faktycznego punktu/regionu z planu na dany dzień (np. Bohinj, Bled, dolina Soczy, wybrzeże) — w Słowenii pogoda mocno się różni: góry vs Ljubljana vs morze. Kontekstowa „POGODA NA TERMIN" to tylko orientacja dla bazy. NIGDY nie pisz „pogoda niedostępna" bez wywołania get_weather,\n` +
     `• search_web — blogi, wydarzenia/festiwale, aktualne tipy, czasowe zamknięcia (do aktualności użyj freshness),\n` +
     `• search_guide — nasze sprawdzone miejsca z poradnika (preferuj je; używaj ich id),\n` +
+    `• nearby — miejsca z poradnika NAJBLIŻEJ aktualnej lokalizacji użytkownika (gdy pyta „co blisko mnie", „najbliższe…"); jeśli brak lokalizacji w kontekście, poproś o jej włączenie,\n` +
     `• place_details — godziny otwarcia, ceny, oceny,\n` +
     `• read_url — gdy wynik search_web wygląda obiecująco i potrzebujesz szczegółów (program, ceny biletów, opis trasy),\n` +
     `• route_info — czas dojazdu autem TYLKO gdy użytkownik wprost pyta o dojazd między miejscami (do planu NIE używaj — czasy doliczymy automatycznie),\n` +
@@ -500,6 +514,20 @@ export async function POST(req: NextRequest) {
             } else if (fn === 'route_info') {
               send({ type: 'step', icon: '🚗', label: `Liczę dojazd: ${a.from || ''} → ${a.to || ''}`.slice(0, 80) })
               result = await routeInfo(a)
+            } else if (fn === 'nearby') {
+              send({ type: 'step', icon: '📍', label: 'Sprawdzam, co blisko Ciebie' })
+              const loc = (Number.isFinite(a.lat) && Number.isFinite(a.lon)) ? { lat: Number(a.lat), lon: Number(a.lon) } : userLoc
+              if (!loc) result = 'Brak lokalizacji użytkownika — poproś, by włączył lokalizację w czacie.'
+              else {
+                const cat = a.category ? String(a.category) : ''
+                const rad = Number.isFinite(a.radius_km) ? Number(a.radius_km) : 40
+                const ranked = places.filter((p) => p.lat != null && p.lon != null && (!cat || p.category === cat))
+                  .map((p) => ({ p, d: haversineKm(loc, { lat: p.lat as number, lon: p.lon as number }) }))
+                  .filter((x) => x.d <= rad).sort((x, y) => x.d - y.d).slice(0, 15)
+                result = ranked.length
+                  ? JSON.stringify(ranked.map((x) => ({ id: x.p.id, nazwa: x.p.name, kategoria: CAT_LABEL[x.p.category] || x.p.category, km: Math.round(x.d * 10) / 10, ocena: x.p.google_rating })))
+                  : 'Brak miejsc z poradnika w tym promieniu.'
+              }
             } else if (fn === 'propose_plan') {
               send({ type: 'step', icon: '🗺️', label: 'Układam plan' })
               const built = buildPlanFromArgs(a, places)

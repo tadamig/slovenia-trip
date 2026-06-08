@@ -11,7 +11,7 @@ import { getSessionId, getSessionName } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount } from './itineraryUtils'
 import GuideDetailModal, { GuideFallback } from './GuideDetailModal'
-import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car, Trash2 } from 'lucide-react'
+import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car, Trash2, Crosshair } from 'lucide-react'
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 const CATMAP: Record<string, { label: string; emoji: string }> = {
@@ -188,7 +188,19 @@ export default function AssistantTab({ room }: { room: Room }) {
   const [sending, setSending] = useState(false)
   const [steps, setSteps] = useState<{ icon: string; label: string }[]>([])
   const [liveReply, setLiveReply] = useState('')
+  const [userPos, setUserPos] = useState<{ lat: number; lon: number } | null>(null)
+  const [geo, setGeo] = useState<'idle' | 'loading' | 'on' | 'denied'>('idle')
   const [detailPlace, setDetailPlace] = useState<GuideFallback | null>(null)
+
+  const askLocation = () => {
+    if (!navigator.geolocation) { setGeo('denied'); return }
+    setGeo('loading')
+    navigator.geolocation.getCurrentPosition(
+      (p) => { setUserPos({ lat: p.coords.latitude, lon: p.coords.longitude }); setGeo('on') },
+      () => setGeo('denied'),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+    )
+  }
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true) // czy „przyklejać" widok do dołu (tylko gdy user jest przy dole)
@@ -267,7 +279,7 @@ export default function AssistantTab({ room }: { room: Room }) {
       const res = await fetch('/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: room.id, messages: history }),
+        body: JSON.stringify({ roomId: room.id, messages: history, loc: userPos || undefined }),
       })
       // strumień NDJSON: kroki na żywo + finalne „done"
       const reader = res.body?.getReader()
@@ -412,6 +424,14 @@ export default function AssistantTab({ room }: { room: Room }) {
 
       {/* Pole wpisywania (przyklejone do dołu nakładki) */}
       <div className="shrink-0 border-t border-stone-800 bg-stone-900 px-3 pt-2 pb-3">
+        <button
+          onClick={askLocation}
+          disabled={geo === 'loading'}
+          className={`mb-1.5 inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border transition-colors disabled:opacity-60 ${geo === 'on' ? 'bg-forest-700/30 border-forest-700/50 text-forest-300' : 'bg-stone-800/60 border-stone-700/50 text-stone-400 hover:text-stone-200'}`}
+        >
+          <Crosshair className="w-3 h-3" />
+          {geo === 'on' ? 'Lokalizacja włączona' : geo === 'loading' ? 'Ustalam lokalizację…' : geo === 'denied' ? 'Brak zgody — spróbuj ponownie' : 'Użyj mojej lokalizacji'}
+        </button>
         <div className="flex items-end gap-2 rounded-2xl border border-stone-700 bg-stone-800 p-1.5">
           <textarea
             value={input}

@@ -49,10 +49,16 @@ async function getWeather(args: any): Promise<string> {
   let label = args.place || ''
   if ((lat == null || lon == null) && args.place) {
     const g = await geocode(String(args.place))
-    if (!g) return `Nie udało się ustalić lokalizacji „${args.place}".`
-    lat = g.lat; lon = g.lon; label = g.label
+    if (g) { lat = g.lat; lon = g.lon; label = g.label }
+    else {
+      // fallback: dopasuj nazwę do miejsca z poradnika i użyj jego współrzędnych
+      const gp = await loadGuide()
+      const nn = norm(String(args.place).split(',')[0])
+      const p = gp.find((x) => x.lat != null && norm(x.name) === nn) || gp.find((x) => x.lat != null && norm(x.name).includes(nn))
+      if (p && p.lat != null && p.lon != null) { lat = p.lat; lon = p.lon; label = p.name }
+    }
   }
-  if (lat == null || lon == null) return 'Brak lokalizacji do sprawdzenia pogody.'
+  if (lat == null || lon == null) return `Nie udało się ustalić lokalizacji „${args.place}".`
 
   const today = new Date()
   let start = args.start_date ? new Date(args.start_date) : today
@@ -343,6 +349,33 @@ async function deepseekStream(messages: any[], tools: any[], onDelta: (_t: strin
   } finally { clearTimeout(t) }
 }
 
+// Nie-strumieniowe wywołanie (do pętli narzędzi — tool_calls są wtu wiarygodne,
+// w streamingu DeepSeek czasem wypluwa wywołanie jako tekst).
+async function deepseekTurn(messages: any[], tools: any[]): Promise<any> {
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 45000)
+  try {
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', temperature: 0.4, max_tokens: 1200, tools: tools.length ? tools : undefined, tool_choice: tools.length ? 'auto' : undefined, messages }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data?.choices?.[0]?.message || null
+  } catch { return null } finally { clearTimeout(t) }
+}
+
+// Usuwa ewentualne wycieki wewnętrznych tokenów/markup narzędzi z tekstu.
+function sanitizeReply(s: string): string {
+  return s
+    .replace(/<｜[\s\S]*$/g, '')
+    .replace(/<\|[\s\S]*$/g, '')
+    .replace(/<\/?(tool_calls|invoke|parameter|｜｜DSML｜｜)[^>]*>/gi, '')
+    .trim()
+}
+
 const TOOLS = [
   { type: 'function', function: { name: 'get_weather', description: 'Pogoda dla miejsca na daty (prognoza do ~15 dni, dalej orientacyjnie z zeszłego roku). Użyj do doboru atrakcji pod pogodę.', parameters: { type: 'object', properties: { place: { type: 'string', description: 'np. Bled, Słowenia' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['place'] } } },
   { type: 'function', function: { name: 'search_web', description: 'Wyszukiwarka internetowa (Brave). Do świeżych informacji: blogi, relacje, wydarzenia/festiwale, aktualne tipy, czasowe zamknięcia.', parameters: { type: 'object', properties: { query: { type: 'string' }, freshness: { type: 'string', enum: ['pd', 'pw', 'pm', 'py'], description: 'opcjonalnie: dzień/tydzień/miesiąc/rok — pod aktualności/wydarzenia' } }, required: ['query'] } } },
@@ -431,10 +464,10 @@ export async function POST(req: NextRequest) {
 
       try {
         for (let round = 0; round < 5; round++) {
-          const msg = await deepseekStream(conversation, TOOLS, (txt) => send({ type: 'delta', text: txt }))
+          const msg = await deepseekTurn(conversation, TOOLS)
           if (!msg) break
           const calls = msg.tool_calls || []
-          if (!calls.length) { reply = (msg.content || '').trim(); break }
+          if (!calls.length) break // model gotowy → finalną odpowiedź streamujemy niżej (bez narzędzi = bez wycieku DSML)
           conversation.push(msg)
           for (const tc of calls) {
             let a: any = {}
@@ -479,12 +512,14 @@ export async function POST(req: NextRequest) {
             conversation.push({ role: 'tool', tool_call_id: tc.id, content: result.slice(0, 4000) })
           }
         }
-        if (!reply) {
-          // wymuś końcową odpowiedź bez narzędzi
-          send({ type: 'step', icon: '✍️', label: 'Składam odpowiedź' })
-          const finalMsg = await deepseekStream([...conversation, { role: 'user', content: 'Podsumuj odpowiedź po polsku na podstawie zebranych informacji.' }], [], (txt) => send({ type: 'delta', text: txt }))
-          reply = (finalMsg?.content || '').trim()
-        }
+        // Finalna odpowiedź zawsze strumieniowo BEZ narzędzi (czysto, bez wycieku DSML).
+        send({ type: 'step', icon: '✍️', label: 'Składam odpowiedź' })
+        const finalMsg = await deepseekStream(
+          [...conversation, { role: 'user', content: 'Na podstawie zebranych informacji odpowiedz teraz po polsku, zwięźle (markdown). Nie wypisuj wywołań narzędzi.' }],
+          [],
+          (txt) => send({ type: 'delta', text: txt }),
+        )
+        reply = sanitizeReply((finalMsg?.content || '').trim())
         if (!reply) reply = 'Nie udało się teraz odpowiedzieć. Spróbuj ponownie.'
         // Fallback: pytanie wygląda na plan, a model nie wywołał propose_plan → wymuś.
         if (!plan && looksLikePlan(lastUser)) {

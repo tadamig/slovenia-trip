@@ -266,7 +266,7 @@ async function forcePlan(messages: any[], places: GuidePlace[]): Promise<{ title
       body: JSON.stringify({
         model: 'deepseek-chat', temperature: 0.2, max_tokens: 800,
         tools: [tool], tool_choice: { type: 'function', function: { name: 'propose_plan' } },
-        messages: [...messages, { role: 'user', content: 'Zwróć teraz ten plan przez narzędzie propose_plan: uporządkowane przystanki w kolejności zwiedzania, z ref/id z wcześniejszych wyników search_guide jeśli to miejsca z poradnika.' }],
+        messages: [...messages, { role: 'user', content: 'Na podstawie powyższej odpowiedzi zwróć plan przez narzędzie propose_plan: KAŻDE wymienione miejsce jako osobny stop (nazwa dokładnie jak w treści, krótka notka, czas w minutach), w kolejności zwiedzania. Jeśli używałeś search_guide, podaj ich id.' }],
       }),
       signal: controller.signal,
     })
@@ -553,7 +553,8 @@ export async function POST(req: NextRequest) {
         // Fallback: pytanie wygląda na plan, a model nie wywołał propose_plan → wymuś.
         if (!plan && looksLikePlan(lastUser)) {
           send({ type: 'step', icon: '🗺️', label: 'Układam plan' })
-          const fp = await forcePlan(conversation, places)
+          // dołącz finalną odpowiedź (plan prozą), żeby forcePlan miał co przekształcić
+          const fp = await forcePlan([...conversation, { role: 'assistant', content: reply }], places)
           if (fp) plan = fp
         }
         // Dolicz czasy dojazdu między kolejnymi przystankami planu (do podglądu trasy).

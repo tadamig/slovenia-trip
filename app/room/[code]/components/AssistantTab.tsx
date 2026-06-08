@@ -310,12 +310,12 @@ export default function AssistantTab({ room }: { room: Room }) {
   return (
     <div className="flex flex-col h-full max-w-lg mx-auto w-full">
       <div className="shrink-0 px-4 pt-4 pb-2">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 pr-8">
           <h2 className="font-display text-lg font-semibold text-stone-100 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-forest-400" /> Asystent
           </h2>
           {messages.length > 0 && (
-            <button onClick={resetChat} disabled={sending} title="Wyczyść czat" className="text-stone-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-stone-800 disabled:opacity-40 transition-colors">
+            <button onClick={resetChat} disabled={sending} title="Wyczyść czat" className="text-stone-500 hover:text-red-400 p-1 rounded-lg hover:bg-stone-800 disabled:opacity-40 transition-colors">
               <Trash2 className="w-4 h-4" />
             </button>
           )}

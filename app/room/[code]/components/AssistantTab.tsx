@@ -11,7 +11,7 @@ import { getSessionId, getSessionName } from '@/lib/session'
 import { useItinerary } from './useItinerary'
 import { tripDayCount } from './itineraryUtils'
 import GuideDetailModal, { GuideFallback } from './GuideDetailModal'
-import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Info, Map as MapIcon, Car, Trash2, Crosshair } from 'lucide-react'
+import { Sparkles, Send, CalendarPlus, Check, Bot, User, ExternalLink, Map as MapIcon, Trash2, Crosshair } from 'lucide-react'
 
 const GMAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
 const CATMAP: Record<string, { label: string; emoji: string }> = {
@@ -96,6 +96,62 @@ function RichText({ text }: { text: string }) {
   return <div className="space-y-1 text-sm text-stone-300">{blocks}</div>
 }
 
+// Karuzela kart miejsc (jak zdjęcia na IG): zdjęcie + ocena + opis; tap → modal szczegółów.
+function PlaceCarousel({ stops, onOpenPlace }: { stops: AssistantPlanStop[]; onOpenPlace: (_s: AssistantPlanStop) => void }) {
+  const [info, setInfo] = useState<Record<string, { photo?: string; rating?: number | null; total?: number | null; desc?: string | null; category?: string }>>({})
+  useEffect(() => {
+    const ids = stops.map((s) => s.guide_place_id).filter(Boolean) as string[]
+    if (!ids.length) return
+    let cancel = false
+    ;(async () => {
+      const [{ data: gp }, { data: det }] = await Promise.all([
+        supabase.from('guide_places').select('id,category,description,google_rating,google_total_ratings').in('id', ids),
+        supabase.from('guide_place_details').select('guide_place_id,photos').in('guide_place_id', ids),
+      ])
+      if (cancel) return
+      const photoById: Record<string, string> = {}
+      ;(det || []).forEach((d: any) => { if (Array.isArray(d.photos) && d.photos[0]) photoById[d.guide_place_id] = d.photos[0] })
+      const map: any = {}
+      ;(gp || []).forEach((p: any) => { map[p.id] = { photo: photoById[p.id], rating: p.google_rating, total: p.google_total_ratings, desc: p.description, category: p.category } })
+      setInfo(map)
+    })()
+    return () => { cancel = true }
+  }, [stops])
+
+  return (
+    <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory scrollbar-hide -mx-1 px-1 pb-1" style={{ scrollbarWidth: 'none' }}>
+      {stops.map((s, i) => {
+        const d = s.guide_place_id ? info[s.guide_place_id] : undefined
+        const emoji = CATMAP[d?.category || '']?.emoji || '📍'
+        return (
+          <button key={i} onClick={() => onOpenPlace(s)} className="snap-start shrink-0 w-40 rounded-xl overflow-hidden border border-stone-700/40 bg-stone-800/60 text-left hover:border-forest-700/60 transition-colors">
+            <div className="h-24 bg-stone-900 relative">
+              {d?.photo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`/api/guide-photo?ref=${encodeURIComponent(d.photo)}&w=400`} alt={s.name} loading="lazy" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-2xl">{emoji}</div>
+              )}
+              <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-forest-600 text-white text-[10px] flex items-center justify-center font-semibold shadow">{i + 1}</span>
+              {s.drive_min_from_prev ? <span className="absolute top-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded-full">🚗 {s.drive_min_from_prev}′</span> : null}
+            </div>
+            <div className="p-2">
+              <p className="text-stone-100 text-xs font-medium line-clamp-1">{s.name}</p>
+              <div className="flex items-center gap-1.5 text-[10px] text-stone-500 mt-0.5">
+                <span>{emoji}</span>
+                {d?.rating ? <span className="text-amber-400 inline-flex items-center gap-0.5">★ {d.rating}{d.total ? ` (${d.total})` : ''}</span> : null}
+                {s.duration_min ? <span>· ~{s.duration_min} min</span> : null}
+              </div>
+              {(d?.desc || s.note) ? <p className="text-[10px] text-stone-400 line-clamp-2 mt-0.5 leading-snug">{d?.desc || s.note}</p> : null}
+              <span className="text-[10px] text-water-400 mt-1 inline-block">Szczegóły →</span>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function PlanBlock({ plan, room, addStops, maxDayIndex, onOpenPlace }: {
   plan: AssistantPlan
   room: Room
@@ -124,25 +180,7 @@ function PlanBlock({ plan, room, addStops, maxDayIndex, onOpenPlace }: {
   return (
     <div className="mt-2 rounded-xl border border-forest-800/40 bg-forest-900/15 p-3">
       {plan.title && <p className="text-forest-300 text-xs font-semibold mb-1.5">🗺️ {plan.title}</p>}
-      <ol className="space-y-1 text-xs text-stone-300">
-        {plan.stops.map((s, i) => (
-          <li key={i}>
-            {i > 0 && s.drive_min_from_prev ? (
-              <p className="text-[10px] text-stone-500 flex items-center gap-1 pl-1 my-0.5"><Car className="w-2.5 h-2.5" /> ~{s.drive_min_from_prev} min dojazdu</p>
-            ) : null}
-            <div className="flex items-start gap-1.5">
-              <span className="text-forest-400 font-semibold flex-shrink-0">{i + 1}.</span>
-              <div className="min-w-0">
-                <button onClick={() => onOpenPlace(s)} className="text-stone-100 font-medium text-left hover:text-water-300 inline-flex items-center gap-1">
-                  {s.name}{(s.guide_place_id || s.lat != null) && <Info className="w-3 h-3 text-stone-500 flex-shrink-0" />}
-                </button>
-                {s.duration_min ? <span className="text-stone-500"> · ~{s.duration_min} min</span> : null}
-                {s.note ? <span className="text-stone-400 block">{s.note}</span> : null}
-              </div>
-            </div>
-          </li>
-        ))}
-      </ol>
+      <PlaceCarousel stops={plan.stops} onOpenPlace={onOpenPlace} />
 
       {plan.stops.some((s) => s.lat != null) && (
         <button onClick={() => setShowMap((v) => !v)} className="mt-2 text-[11px] text-water-400 hover:text-water-300 inline-flex items-center gap-1">
